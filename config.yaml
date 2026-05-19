@@ -1,0 +1,57 @@
+project_name: MyProject
+default_test_command: "pytest"
+
+max_ai_calls_per_run: 5
+max_review_loops: 1
+max_files_sent: 8
+max_chars_per_file: 12000
+max_total_chars: 80000
+
+claude_command: "claude --print"
+codex_command: "codex exec"
+
+agents:
+  planner: claude
+  implementer: codex
+  reviewer: claude
+
+ignore_dirs:
+  - .git
+  - node_modules
+  - venv
+  - .venv
+  - __pycache__
+  - dist
+  - build
+  - .agentforge
+
+text_extensions:
+  - .py
+  - .js
+  - .ts
+  - .tsx
+  - .jsx
+  - .go
+  - .rs
+  - .java
+  - .md
+  - .yaml
+  - .yml
+  - .json
+  - .toml
+
+risky_files:
+  - auth
+  - security
+  - payment
+  - database
+  - migrations
+  - config
+  - secret
+
+secret_files:
+  - .env
+  - .env.local
+  - credentials.json
+
+branch_prefix: "agentforge/"
