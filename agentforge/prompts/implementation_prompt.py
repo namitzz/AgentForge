@@ -23,6 +23,9 @@ When you finish, output a short Markdown summary with:
 IMPLEMENTATION_TEMPLATE = """\
 {system}
 
+# Project rules
+{project_rules}
+
 # Task
 {task}
 
@@ -58,9 +61,11 @@ def build_implementation_prompt(
     files: list[tuple[str, str]],
     max_chars_per_file: int,
     secret_files: list[str],
+    project_rules: str | None = None,
 ) -> str:
     return IMPLEMENTATION_TEMPLATE.format(
         system=IMPLEMENTATION_SYSTEM.strip(),
+        project_rules=(project_rules or "").strip() or "(no project rules file found)",
         task=task.strip(),
         plan=plan.strip() or "(no plan provided)",
         files_block=_files_block(files, max_chars_per_file),

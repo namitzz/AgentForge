@@ -37,6 +37,7 @@ from .config import Config
 from .context_builder import BuiltContext, build_context, summarize_repo
 from .logger import RunLogger
 from .policy_engine import PolicyEngine, PolicyReport
+from .project_rules import load_project_rules
 from .risk_engine import RiskEngine, RiskLevel, RiskReport
 from .run_artifacts import RunManifest
 from .prompts.implementation_prompt import build_implementation_prompt
@@ -111,6 +112,21 @@ class Orchestrator:
 
     def _policy_engine(self) -> PolicyEngine:
         return PolicyEngine.from_config_list(self.config.policies)
+
+    def _load_project_rules(self) -> str | None:
+        """Load .agentforge/project_rules.md and emit a status line."""
+        rules = load_project_rules(self.cwd)
+        if rules:
+            self._emit(
+                f"Project rules: loaded from .agentforge/project_rules.md "
+                f"({len(rules)} chars)"
+            )
+        else:
+            self._emit(
+                "Project rules: none found (continuing safely; "
+                "create .agentforge/project_rules.md to add project-specific guidance)"
+            )
+        return rules
 
     def _build_manifest(
         self,
@@ -352,12 +368,15 @@ class Orchestrator:
 
         risk_report = self._assess_risk(task, context.selected_paths, logger)
 
+        project_rules = self._load_project_rules()
+
         planner_kind = classification.routing.planner or self.config.agents.planner
         planning_prompt = build_planning_prompt(
             task=task,
             task_type=classification.task_type.value,
             repo_summary=context.repo_summary_text,
             relevant_files=context.selected_paths,
+            project_rules=project_rules,
         )
         logger.save_prompts({"planner": planning_prompt})
 
@@ -508,12 +527,15 @@ class Orchestrator:
                         manifest=manifest,
                     )
 
+        project_rules = self._load_project_rules()
+
         # Build prompts up front so they're recorded even in dry-run.
         planning_prompt = build_planning_prompt(
             task=task,
             task_type=classification.task_type.value,
             repo_summary=context.repo_summary_text,
             relevant_files=context.selected_paths,
+            project_rules=project_rules,
         )
         impl_prompt = build_implementation_prompt(
             task=task,
@@ -521,6 +543,7 @@ class Orchestrator:
             files=context.selected_files,
             max_chars_per_file=self.config.max_chars_per_file,
             secret_files=self.config.secret_files,
+            project_rules=project_rules,
         )
         prompts_blob: dict[str, str] = {
             "planner": planning_prompt,
@@ -584,6 +607,7 @@ class Orchestrator:
             files=context.selected_files,
             max_chars_per_file=self.config.max_chars_per_file,
             secret_files=self.config.secret_files,
+            project_rules=project_rules,
         )
         logger.save_prompts(prompts_blob)
 
@@ -740,11 +764,14 @@ class Orchestrator:
         # Risk scoring runs on the task description (paths are unknown here).
         risk_report = self._assess_risk(task or "", [], logger)
 
+        project_rules = self._load_project_rules()
+
         prompt = build_review_prompt(
             task=task or "(no task description supplied)",
             plan="(plan not provided to review-only mode)",
             diff=diff_text,
             test_result="(tests not run in review-only mode)",
+            project_rules=project_rules,
         )
         logger.save_prompts({"reviewer": prompt})
 
@@ -867,6 +894,8 @@ class Orchestrator:
 
         risk_report = self._assess_risk(task or "", changed, logger)
 
+        project_rules = self._load_project_rules()
+
         # Build the review prompt. Use the risk + policy summaries so the
         # reviewer has the same local-first context the operator sees.
         prompt = build_pr_review_prompt(
@@ -877,6 +906,7 @@ class Orchestrator:
             diff=diff_text,
             risk_summary="\n".join(risk_report.human_summary()),
             policy_summary="\n".join(policy_report.human_summary()),
+            project_rules=project_rules,
         )
         logger.save_prompts({"reviewer": prompt})
 
@@ -1037,6 +1067,7 @@ class Orchestrator:
         prompt = build_review_prompt(
             task=task, plan=plan, diff=capped_diff,
             test_result=test_result.to_text(),
+            project_rules=load_project_rules(self.cwd),
         )
         try:
             resp = self._call_agent(budget, reviewer, prompt, role="reviewer")

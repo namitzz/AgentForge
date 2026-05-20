@@ -14,6 +14,7 @@ from rich.table import Table
 from .config import DEFAULT_CONFIG_PATH, load_config, write_default_config
 from .logger import RUNS_ROOT, latest_run_dir
 from .orchestrator import Orchestrator, RunResult
+from .project_rules import PROJECT_RULES_REL_PATH, write_default_project_rules
 from .tools.test_runner import run_tests
 
 
@@ -56,9 +57,12 @@ def init(
     cfg_path = write_default_config(config_path, overwrite=force)
     forge_dir = Path(".agentforge")
     (forge_dir / "runs").mkdir(parents=True, exist_ok=True)
+    rules_path = write_default_project_rules(overwrite=force)
     console.print(f"[green]OK[/green] config at {cfg_path}")
     console.print(f"[green]OK[/green] runs directory at {forge_dir / 'runs'}")
+    console.print(f"[green]OK[/green] project rules at {rules_path}")
     console.print("Edit config.yaml to point at your Claude / Codex CLIs.")
+    console.print(f"Edit {PROJECT_RULES_REL_PATH} to add project-specific guidance.")
 
 
 @app.command()

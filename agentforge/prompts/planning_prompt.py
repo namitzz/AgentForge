@@ -12,6 +12,9 @@ Be concise. Prefer bullet lists. Avoid restating the task.
 PLANNING_TEMPLATE = """\
 {system}
 
+# Project rules
+{project_rules}
+
 # Task
 {task}
 
@@ -52,9 +55,11 @@ def build_planning_prompt(
     task_type: str,
     repo_summary: str,
     relevant_files: list[str],
+    project_rules: str | None = None,
 ) -> str:
     return PLANNING_TEMPLATE.format(
         system=PLANNING_SYSTEM.strip(),
+        project_rules=(project_rules or "").strip() or "(no project rules file found)",
         task=task.strip(),
         task_type=task_type,
         repo_summary=repo_summary.strip() or "(no summary)",

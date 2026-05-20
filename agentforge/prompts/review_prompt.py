@@ -20,6 +20,9 @@ You MUST respond with a single JSON object and nothing else.
 REVIEW_TEMPLATE = """\
 {system}
 
+# Project rules
+{project_rules}
+
 # Task
 {task}
 
@@ -50,9 +53,16 @@ REVIEW_TEMPLATE = """\
 """
 
 
-def build_review_prompt(task: str, plan: str, diff: str, test_result: str) -> str:
+def build_review_prompt(
+    task: str,
+    plan: str,
+    diff: str,
+    test_result: str,
+    project_rules: str | None = None,
+) -> str:
     return REVIEW_TEMPLATE.format(
         system=REVIEW_SYSTEM.strip(),
+        project_rules=(project_rules or "").strip() or "(no project rules file found)",
         task=task.strip(),
         plan=plan.strip() or "(no plan)",
         diff=diff.strip() or "(no diff)",
@@ -79,6 +89,9 @@ You MUST respond with a single JSON object and nothing else.
 
 PR_REVIEW_TEMPLATE = """\
 {system}
+
+# Project rules
+{project_rules}
 
 # Task (optional)
 {task}
@@ -126,10 +139,12 @@ def build_pr_review_prompt(
     diff: str,
     risk_summary: str,
     policy_summary: str,
+    project_rules: str | None = None,
 ) -> str:
     rendered_files = "\n".join(f"- {p}" for p in changed_files) or "(no files)"
     return PR_REVIEW_TEMPLATE.format(
         system=PR_REVIEW_SYSTEM.strip(),
+        project_rules=(project_rules or "").strip() or "(no project rules file found)",
         task=(task or "").strip() or "(no task description supplied)",
         base_branch=base_branch,
         head_branch=head_branch,
