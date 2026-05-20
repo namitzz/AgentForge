@@ -813,6 +813,150 @@ class Orchestrator:
             aborted_reason=aborted,
         )
 
+    # --- PR-style branch review --------------------------------------
+    def review_pr(
+        self,
+        task: str | None = None,
+        dry_run: bool = False,
+        base: str | None = None,
+    ) -> RunResult:
+        """Review the current branch against ``base`` (default: main, then master).
+
+        Does not push, does not open a GitHub PR, does not require any
+        GitHub authentication. Pure local git diff + reviewer prompt.
+        """
+        logger = RunLogger()
+        budget = BudgetManager(self.config)
+        local = LocalAgent(config=self.config, cwd=self.cwd)
+
+        if not git_tools.is_git_repo(self.cwd):
+            raise RuntimeError("not a git repo; cannot review PR")
+
+        head_branch = git_tools.current_branch(self.cwd) or "HEAD"
+        base_branch = base or git_tools.find_default_base(self.cwd)
+        if base_branch is None:
+            raise RuntimeError(
+                "could not find a base branch (looked for 'main' then 'master'). "
+                "Pass --base <branch> to select one explicitly."
+            )
+        if head_branch == base_branch:
+            self._emit(
+                f"WARNING: current branch ({head_branch}) is the base branch - "
+                f"diff will likely be empty."
+            )
+
+        self._emit(f"PR review: {base_branch}...{head_branch}")
+        diff_text = git_tools.diff_between(base_branch, "HEAD", self.cwd)
+        changed = git_tools.changed_files_between(base_branch, "HEAD", self.cwd)
+        self._emit(f"Changed files ({len(changed)}): {', '.join(changed) if changed else '(none)'}")
+        logger.save_diff(diff_text)
+        logger.save_selected_files([{"path": p, "chars": 0} for p in changed])
+
+        manifest = self._build_manifest(
+            logger=logger, mode="review-pr", task=(task or ""),
+            dry_run=dry_run, classification=None,
+        )
+
+        if dry_run:
+            self._emit_planned_workflow(mode="review", classification=None)
+
+        # Risk + policy run against the actual changed files (not the
+        # context-builder selection, which doesn't apply to PR mode).
+        kept_paths, policy_report = self._apply_policies(changed)
+        logger.save_policy_report(policy_report.to_dict())
+
+        risk_report = self._assess_risk(task or "", changed, logger)
+
+        # Build the review prompt. Use the risk + policy summaries so the
+        # reviewer has the same local-first context the operator sees.
+        prompt = build_pr_review_prompt(
+            task=task,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            changed_files=changed,
+            diff=diff_text,
+            risk_summary="\n".join(risk_report.human_summary()),
+            policy_summary="\n".join(policy_report.human_summary()),
+        )
+        logger.save_prompts({"reviewer": prompt})
+
+        # Budget estimate.
+        budget.set_dry_run(dry_run)
+        budget.record_files_sent(len(changed))
+        budget.record_planned(ai_calls=1, chars=len(prompt))
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        if not dry_run:
+            try:
+                budget.enforce_planned_within_caps()
+            except BudgetExceeded as exc:
+                budget.mark_stopped_early(True, reason=str(exc))
+                self._emit(f"Aborting review-pr: {exc}")
+
+        # Reviewer call.
+        review_json: dict | None = None
+        aborted: str | None = None
+        reviewer_kind = self.config.agents.reviewer
+        if dry_run:
+            self._emit(
+                f"DRY-RUN — would call {reviewer_kind} as reviewer with "
+                f"{len(prompt)} chars on a {len(diff_text)}-char diff covering "
+                f"{len(changed)} file(s). No call made."
+            )
+        elif budget.stopped_early:
+            # Budget already aborted; fall through to artifact writing.
+            pass
+        else:
+            try:
+                reviewer = self._agent(reviewer_kind)
+                resp = self._call_agent(budget, reviewer, prompt, role="reviewer")
+                if resp.ok:
+                    review_json = self._parse_review_json(resp.output)
+                else:
+                    aborted = resp.error or f"reviewer exit {resp.exit_code}"
+            except (BudgetExceeded, AgentUnavailable) as exc:
+                aborted = str(exc)
+                self._emit(
+                    f"Reviewer unavailable: {exc}. Try `--dry-run` to preview "
+                    f"the prompt without calling an agent."
+                )
+
+        if review_json:
+            logger.save_review(review_json)
+        if aborted:
+            budget.mark_stopped_early(True, reason=aborted)
+        elif dry_run and not budget.stopped_early:
+            budget.mark_stopped_early(True, reason="dry-run - no agent calls made")
+        logger.save_budget(budget.snapshot().to_dict())
+        self._finalize_manifest(logger, manifest, budget)
+
+        stats = diff_tools.parse_diff_stats(diff_text).to_dict()
+        final = self._write_summary(
+            logger=logger, task=task or "", classification=None, branch=head_branch,
+            diff_text=diff_text, diff_stats=stats, test_result=None,
+            review=review_json, policy_report=policy_report,
+            risk_report=risk_report,
+            budget=budget, plan=f"(PR review of {base_branch}...{head_branch})",
+            mode=("review-pr-dry-run" if dry_run else "review-pr"),
+            aborted=aborted,
+        )
+
+        logger.fill_missing_placeholders(
+            reason=("dry-run preview - no agent calls made" if dry_run else "review-pr mode")
+        )
+
+        return RunResult(
+            run_id=logger.run_id, run_dir=logger.dir, task=task or "",
+            classification={}, plan="", branch=head_branch, diff_stats=stats,
+            test_passed=None, review=review_json,
+            policy_report=policy_report.to_dict(),
+            risk_report=risk_report.to_dict(),
+            dry_run=dry_run,
+            budget=budget.snapshot().to_dict(),
+            final_summary=final,
+            aborted_reason=aborted,
+        )
+
     # --- helpers ------------------------------------------------------
     @staticmethod
     def _drop_blocked_from_context(context: BuiltContext, kept_paths: list[str]) -> BuiltContext:

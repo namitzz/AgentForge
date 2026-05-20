@@ -117,6 +117,21 @@ def review(
     _print_result(result, show_plan=False)
 
 
+@app.command("review-pr")
+def review_pr(
+    task: str = typer.Option("", "--task", help="Optional task description for context."),
+    base: str = typer.Option("", "--base", help="Base branch to compare against. Auto-detects main, then master."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the review prompt without calling the reviewer."),
+) -> None:
+    """Review the current branch's diff against main/master (PR-style)."""
+    orch = _load(config_path)
+    if dry_run:
+        _dry_run_banner()
+    result = orch.review_pr(task=task or None, dry_run=dry_run, base=base or None)
+    _print_result(result, show_plan=False)
+
+
 @app.command()
 def test(
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),

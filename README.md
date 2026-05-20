@@ -278,7 +278,8 @@ python -m agentforge init                                       # one-time setup
 python -m agentforge plan  "fix the off-by-one in pagination"   # plan only
 python -m agentforge solve "fix the off-by-one in pagination"   # full pipeline
 python -m agentforge solve "fix pagination" --dry-run           # preview, zero AI
-python -m agentforge review --task "added webhook check"        # review current diff
+python -m agentforge review --task "added webhook check"        # review working-tree diff
+python -m agentforge review-pr --dry-run                        # PR-style branch review
 python -m agentforge status                                     # latest run summary
 ```
 
@@ -319,6 +320,53 @@ Tip: the agent CLI doesn't seem to be installed. Re-run with --dry-run to
 preview the full pipeline (scan, classify, risk score, prompts) without
 calling any external agent.
 ```
+
+## PR review mode
+
+`agentforge review-pr` reviews the **current branch** against `main` (falling back to `master`) without needing the full `solve` workflow. Use it as a local-only second opinion before opening a real PR.
+
+```bash
+python -m agentforge review-pr
+python -m agentforge review-pr --task "Review password reset changes"
+python -m agentforge review-pr --base develop
+python -m agentforge review-pr --dry-run
+```
+
+What it does:
+
+1. Detects the current branch (`git rev-parse --abbrev-ref HEAD`).
+2. Picks a base branch: `--base` if you passed one, else `main`, else `master`. Aborts cleanly if none of those exist.
+3. Collects the branch-style diff (`git diff base...HEAD`) and the list of changed files.
+4. Runs risk scoring on the task + changed paths.
+5. Runs the policy engine on the changed paths (e.g. block secrets, force review on auth changes).
+6. Builds a review prompt that includes: task, base + head branches, the changed file list, the local risk + policy summaries, and the diff. Saves it to `prompts.json`.
+7. If `--dry-run`, prints the prompt size and stops. Otherwise calls the configured reviewer agent.
+8. Saves the same artifact set as every other run.
+
+The CLI prints:
+
+```
+- PR review: main...agentforge/add-password-validation
+- Changed files (3): src/utils/validators.py, src/auth/login.py, tests/test_auth.py
+- Risk assessment:
+- - Level: HIGH
+- - Score: 75/100
+- Policy checks:
+- - Review required: yes
+- - Human approval required: yes
+- Budget estimate:
+- - Planned AI calls: 1/5
+- ...
+Run artifacts saved to:
+  .agentforge/runs/20260521-001500/
+```
+
+What it does **not** do:
+
+- Never pushes a branch.
+- Never opens a GitHub PR.
+- Never requires GitHub authentication or a `GITHUB_TOKEN`.
+- Never merges anything. The branch is yours.
 
 ## Comparison
 
