@@ -1,16 +1,28 @@
 {
-  "task": "Add Stripe webhook signature verification to the billing handler",
+  "run_id": "20260520-141207",
   "mode": "solve",
+  "task": "Add password reset validation to the login flow",
   "dry_run": false,
+  "started_at": "2026-05-20T14:12:07",
+  "ended_at":   "2026-05-20T14:14:33",
+  "command": "python -m agentforge solve \"Add password reset validation to the login flow\"",
+  "agentforge_version": "0.1.0",
+  "agent_workflow": {
+    "planner": "claude",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
   "classification": {
     "task_type": "security",
-    "confidence": 0.8,
-    "keywords_matched": ["security", "auth "],
+    "confidence": 0.80,
+    "keywords_matched": ["auth ", "secret", "login"],
     "routing": {
       "planner": "claude",
       "implementer": "codex",
       "reviewer": "claude",
       "require_review": true
     }
-  }
+  },
+  "stopped_early": false,
+  "stop_reason": null
 }

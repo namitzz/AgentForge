@@ -1,0 +1,32 @@
+{
+  "root": "/Users/jane/code/sample-webapp",
+  "file_count": 42,
+  "total_bytes": 187432,
+  "languages": {
+    ".py": 28,
+    ".md": 4,
+    ".yaml": 3,
+    ".json": 3,
+    ".html": 2,
+    ".cfg": 1,
+    ".toml": 1
+  },
+  "top_dirs": ["docs", "src", "tests"],
+  "files": [
+    {"path": "README.md", "size": 2103, "is_risky": false},
+    {"path": "pyproject.toml", "size": 814, "is_risky": false},
+    {"path": "src/__init__.py", "size": 0, "is_risky": false},
+    {"path": "src/app.py", "size": 1432, "is_risky": false},
+    {"path": "src/auth/__init__.py", "size": 0, "is_risky": true},
+    {"path": "src/auth/login.py", "size": 2884, "is_risky": true},
+    {"path": "src/auth/models.py", "size": 1716, "is_risky": true},
+    {"path": "src/auth/password_reset.py", "size": 712, "is_risky": true},
+    {"path": "src/auth/session.py", "size": 1244, "is_risky": true},
+    {"path": "src/utils/__init__.py", "size": 0, "is_risky": false},
+    {"path": "src/utils/email.py", "size": 894, "is_risky": false},
+    {"path": "src/utils/validators.py", "size": 1308, "is_risky": false},
+    {"path": "tests/conftest.py", "size": 502, "is_risky": false},
+    {"path": "tests/test_auth.py", "size": 1932, "is_risky": true},
+    {"path": "tests/test_validators.py", "size": 718, "is_risky": false}
+  ]
+}

@@ -1,23 +1,37 @@
 {
-  "blocked_files": [
-    {
-      "policy": "Never send secrets to AI",
-      "path": ".env",
-      "reason": "block"
-    }
-  ],
+  "blocked_files": [],
   "matched_files": [
     {
       "policy": "Auth changes require review",
-      "path": "billing/webhooks.py",
+      "path": "src/auth/login.py",
+      "reason": "match"
+    },
+    {
+      "policy": "Auth changes require review",
+      "path": "src/auth/password_reset.py",
+      "reason": "match"
+    },
+    {
+      "policy": "Auth changes require review",
+      "path": "src/auth/models.py",
+      "reason": "match"
+    },
+    {
+      "policy": "Sensitive flows require human approval",
+      "path": "src/auth/login.py",
+      "reason": "match"
+    },
+    {
+      "policy": "Sensitive flows require human approval",
+      "path": "src/auth/password_reset.py",
       "reason": "match"
     }
   ],
   "require_review": true,
   "require_tests": true,
-  "require_human_approval": false,
+  "require_human_approval": true,
   "triggering_policies": [
     "Auth changes require review",
-    "Never send secrets to AI"
+    "Sensitive flows require human approval"
   ]
 }

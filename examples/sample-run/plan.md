@@ -1,26 +1,24 @@
 ## Task understanding
-Add HMAC signature verification to the Stripe webhook handler so that requests with a missing or invalid `Stripe-Signature` header are rejected before any state is changed.
+Harden the password-reset endpoint inside the login flow so that any new password chosen by the user passes the same strength rules already enforced at signup. Today the reset endpoint accepts any non-empty string, which lets a returning user replace a strong password with something trivial.
 
 ## Relevant files
-- `billing/webhooks.py` — current handler, accepts the request body without verification.
-- `billing/config.py` — already reads other Stripe secrets; add `STRIPE_WEBHOOK_SECRET` here.
-- `tests/test_webhooks.py` — needs new cases for valid, invalid, and missing signatures.
+- `src/auth/login.py` — handles the `/reset-password` endpoint; currently writes the new password straight to the user record.
+- `src/auth/password_reset.py` — verifies reset tokens; no validation of the new password.
+- `src/utils/validators.py` — contains the password rules used at signup. We will reuse this rather than duplicate.
+- `tests/test_auth.py` — extend with three new reset cases.
 
 ## Risks
-- **medium** — A bug in verification could reject all legitimate webhooks. Mitigate with explicit tests against Stripe's documented tolerance window.
-- **low** — Replay protection isn't in scope here; flag for a follow-up issue.
+- **medium** — a regression here could lock users out of resetting their password. Mitigate with explicit test cases for valid + invalid passwords.
+- **low** — rate limiting on reset attempts is out of scope; flag as a follow-up issue.
 
 ## Implementation steps
-1. Add `STRIPE_WEBHOOK_SECRET` to `billing/config.py` with a clear error if missing.
-2. In `billing/webhooks.py`, read the raw request body before parsing JSON.
-3. Compute `hmac.new(secret, body, sha256)` and compare against the `Stripe-Signature` header's `v1=` value using `hmac.compare_digest`.
-4. Reject with 400 on missing header, 401 on mismatch.
-5. Log rejected requests with request ID but no body content.
+1. Extract the signup strength check into a reusable `validate_password_strength(password) -> (bool, str)` in `validators.py`.
+2. Call it from the reset endpoint in `login.py`. On failure, return 400 with the validator's reason.
+3. Log rejected attempts with the user id and reason category (no password content in logs).
+4. Add three test cases to `tests/test_auth.py`: valid password accepted, too-short password rejected, missing-digit password rejected.
 
 ## Test strategy
-- Extend `tests/test_webhooks.py` with three cases: valid signature, invalid signature, missing header.
-- Reuse the existing fake Stripe payload fixture; sign it with a known test secret.
-- Run `pytest tests/test_webhooks.py -v`.
+Extend `tests/test_auth.py` using the existing test client fixture. Run with `pytest tests/test_auth.py -v`. CI test command (`pytest`) covers the whole suite.
 
 ## Reviewer needed?
-Yes — touches authentication boundary and request rejection logic. Diff-only review is sufficient.
+Yes — the change is on the authentication boundary. Diff-only review is sufficient.

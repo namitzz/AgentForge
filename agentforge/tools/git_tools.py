@@ -86,6 +86,44 @@ def diff_against(ref: str, path: Path | str = ".") -> str:
     return _run(["git", "diff", ref], cwd=path)
 
 
+def ref_exists(ref: str, path: Path | str = ".") -> bool:
+    """True if ``ref`` resolves to a commit in the repo at ``path``."""
+    try:
+        out = _run(["git", "rev-parse", "--verify", ref], cwd=path, check=False)
+    except GitError:
+        return False
+    return bool(out.strip())
+
+
+_DEFAULT_BASE_CANDIDATES: tuple[str, ...] = ("main", "master")
+
+
+def find_default_base(
+    path: Path | str = ".",
+    candidates: tuple[str, ...] = _DEFAULT_BASE_CANDIDATES,
+) -> str | None:
+    """Return the first existing branch from ``candidates`` (default: main, master)."""
+    for ref in candidates:
+        if ref_exists(ref, path):
+            return ref
+    return None
+
+
+def diff_between(base: str, head: str = "HEAD", path: Path | str = ".") -> str:
+    """Return the PR-style diff: changes introduced by ``head`` since branching
+    from ``base`` (uses the three-dot form so unrelated commits on ``base``
+    after the branch point are ignored)."""
+    return _run(["git", "diff", f"{base}...{head}"], cwd=path)
+
+
+def changed_files_between(
+    base: str, head: str = "HEAD", path: Path | str = ".",
+) -> list[str]:
+    """List files changed on ``head`` vs ``base`` (three-dot)."""
+    out = _run(["git", "diff", "--name-only", f"{base}...{head}"], cwd=path)
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def changed_files(path: Path | str = ".") -> list[str]:
     """List files with uncommitted changes (working tree + staged)."""
     out = _run(["git", "status", "--porcelain"], cwd=path)

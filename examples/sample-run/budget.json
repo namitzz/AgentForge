@@ -1,11 +1,16 @@
 {
   "ai_calls": 3,
   "review_loops": 0,
-  "chars_sent": 41280,
+  "chars_sent": 42180,
   "files_sent": 5,
   "max_ai_calls": 5,
   "max_review_loops": 1,
   "max_total_chars": 80000,
   "max_files_sent": 8,
-  "stopped_early": false
+  "max_chars_per_file": 12000,
+  "planned_ai_calls": 3,
+  "planned_chars_sent": 45200,
+  "dry_run": false,
+  "stopped_early": false,
+  "stop_reason": null
 }

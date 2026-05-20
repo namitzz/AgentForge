@@ -3,10 +3,15 @@
   "risk_level": "low",
   "issues": [
     {
-      "file": "billing/webhooks.py",
-      "problem": "Logged request ID is fine, but consider logging the failure reason category as well so dashboards can distinguish missing-header vs invalid-signature.",
-      "suggested_fix": "Add a `reason` label to the log line (e.g. 'missing_header' | 'invalid_signature')."
+      "file": "src/auth/login.py",
+      "problem": "Rate limiting on /reset-password is still missing. Not in scope for this PR, but worth filing a follow-up issue so it doesn't get forgotten.",
+      "suggested_fix": "Open a follow-up issue: \"Add per-user rate limit (5/hour) to /reset-password\"."
+    },
+    {
+      "file": "src/utils/validators.py",
+      "problem": "validate_password_strength returns string reason codes; signup should be updated to use the same codes for consistency. Not required to merge, but reduces duplication.",
+      "suggested_fix": "In a follow-up, replace the bool-returning signup check with this same function and surface the same reason codes."
     }
   ],
-  "summary": "Signature verification is implemented correctly with hmac.compare_digest. Header parsing handles missing values. One minor logging suggestion, otherwise safe to merge."
+  "summary": "Diff implements the validation correctly. Strong password rule is shared between signup and reset, rejected attempts return 400 with a reason code, and the log line never contains the password itself. Tests cover the three documented cases. Two follow-up suggestions noted, neither blocking."
 }

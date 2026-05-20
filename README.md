@@ -267,7 +267,9 @@ Run artifacts saved to:
   .agentforge/runs/20260520-141207/
 ```
 
-See [examples/sample-run/](examples/sample-run/) for a realistic example directory.
+### See it without running it
+
+A complete worked example is in [`examples/sample-run/`](examples/sample-run/) — all 12 artifacts for a realistic HIGH-risk task ("Add password reset validation to the login flow"), so you can understand the audit trail without installing any agent CLI.
 
 ## Example commands
 

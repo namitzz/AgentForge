@@ -1,0 +1,28 @@
+{
+  "risk_level": "HIGH",
+  "score": 85,
+  "reasons": [
+    "Task mentions high-risk topics: login, password, auth",
+    "Selected file paths include sensitive areas: auth/, /auth."
+  ],
+  "recommended_workflow": [
+    "Claude planning required",
+    "Codex implementation allowed",
+    "Tests strongly recommended",
+    "Claude diff review required",
+    "Human approval required before merge"
+  ],
+  "review_required": true,
+  "tests_required": true,
+  "human_approval_required": true,
+  "keyword_matches": {
+    "high":   ["login", "password", "auth"],
+    "medium": ["add"],
+    "low":    []
+  },
+  "path_matches": {
+    "high":   ["src/auth/login.py", "src/auth/password_reset.py", "src/auth/models.py"],
+    "medium": [],
+    "low":    []
+  }
+}

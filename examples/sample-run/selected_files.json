@@ -1,0 +1,7 @@
+[
+  {"path": "src/auth/login.py",           "chars": 2884},
+  {"path": "src/auth/password_reset.py",  "chars": 712},
+  {"path": "src/auth/models.py",          "chars": 1716},
+  {"path": "src/utils/validators.py",     "chars": 1308},
+  {"path": "tests/test_auth.py",          "chars": 1932}
+]

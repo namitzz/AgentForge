@@ -41,7 +41,7 @@ from .risk_engine import RiskEngine, RiskLevel, RiskReport
 from .run_artifacts import RunManifest
 from .prompts.implementation_prompt import build_implementation_prompt
 from .prompts.planning_prompt import build_planning_prompt
-from .prompts.review_prompt import build_review_prompt
+from .prompts.review_prompt import build_pr_review_prompt, build_review_prompt
 from .task_classifier import Classification, classify
 from .tools import diff_tools, git_tools
 from .tools.file_scanner import RepoSummary
