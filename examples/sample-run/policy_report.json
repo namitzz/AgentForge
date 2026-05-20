@@ -1,0 +1,23 @@
+{
+  "blocked_files": [
+    {
+      "policy": "Never send secrets to AI",
+      "path": ".env",
+      "reason": "block"
+    }
+  ],
+  "matched_files": [
+    {
+      "policy": "Auth changes require review",
+      "path": "billing/webhooks.py",
+      "reason": "match"
+    }
+  ],
+  "require_review": true,
+  "require_tests": true,
+  "require_human_approval": false,
+  "triggering_policies": [
+    "Auth changes require review",
+    "Never send secrets to AI"
+  ]
+}

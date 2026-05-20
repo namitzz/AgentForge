@@ -1,0 +1,12 @@
+{
+  "status": "approved",
+  "risk_level": "low",
+  "issues": [
+    {
+      "file": "billing/webhooks.py",
+      "problem": "Logged request ID is fine, but consider logging the failure reason category as well so dashboards can distinguish missing-header vs invalid-signature.",
+      "suggested_fix": "Add a `reason` label to the log line (e.g. 'missing_header' | 'invalid_signature')."
+    }
+  ],
+  "summary": "Signature verification is implemented correctly with hmac.compare_digest. Header parsing handles missing values. One minor logging suggestion, otherwise safe to merge."
+}

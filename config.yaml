@@ -55,3 +55,28 @@ secret_files:
   - credentials.json
 
 branch_prefix: "agentforge/"
+
+# Declarative governance rules. PolicyEngine enforces these at every run.
+policies:
+  - name: "Auth changes require review"
+    match:
+      - "auth/**"
+      - "**/login*"
+      - "**/security*"
+    require_review: true
+    require_tests: true
+
+  - name: "Never send secrets to AI"
+    block:
+      - ".env"
+      - ".env.*"
+      - "*.pem"
+      - "credentials.json"
+      - "**/secrets*"
+
+  - name: "Database changes require human approval"
+    match:
+      - "migrations/**"
+      - "**/schema.sql"
+      - "**/models.py"
+    require_human_approval: true

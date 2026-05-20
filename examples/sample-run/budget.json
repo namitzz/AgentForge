@@ -1,0 +1,11 @@
+{
+  "ai_calls": 3,
+  "review_loops": 0,
+  "chars_sent": 41280,
+  "files_sent": 5,
+  "max_ai_calls": 5,
+  "max_review_loops": 1,
+  "max_total_chars": 80000,
+  "max_files_sent": 8,
+  "stopped_early": false
+}

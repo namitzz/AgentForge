@@ -51,6 +51,9 @@ class Config:
 
     branch_prefix: str = "agentforge/"
 
+    # Declarative governance rules. Raw dicts; PolicyEngine parses them.
+    policies: list[dict[str, Any]] = field(default_factory=list)
+
     # Filled by the loader.
     source_path: Path | None = None
 
@@ -78,6 +81,7 @@ class Config:
             risky_files=list(data.get("risky_files", cls.__dataclass_fields__["risky_files"].default_factory())),
             secret_files=list(data.get("secret_files", cls.__dataclass_fields__["secret_files"].default_factory())),
             branch_prefix=data.get("branch_prefix", "agentforge/"),
+            policies=list(data.get("policies") or []),
             source_path=source,
         )
         return cfg
@@ -153,6 +157,31 @@ secret_files:
   - credentials.json
 
 branch_prefix: "agentforge/"
+
+# Declarative governance rules. Optional but recommended.
+policies:
+  - name: "Auth changes require review"
+    match:
+      - "auth/**"
+      - "**/login*"
+      - "**/security*"
+    require_review: true
+    require_tests: true
+
+  - name: "Never send secrets to AI"
+    block:
+      - ".env"
+      - ".env.*"
+      - "*.pem"
+      - "credentials.json"
+      - "**/secrets*"
+
+  - name: "Database changes require human approval"
+    match:
+      - "migrations/**"
+      - "**/schema.sql"
+      - "**/models.py"
+    require_human_approval: true
 """
 
 

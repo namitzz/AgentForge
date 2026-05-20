@@ -4,13 +4,22 @@ Workflow (solve):
   1. scan repo (local)
   2. classify task (local)
   3. build minimal relevant context (local)
-  4. planner agent -> plan
-  5. create git branch
-  6. implementation agent -> code edits
-  7. run tests (local)
-  8. reviewer agent -> JSON review (sees only the diff)
-  9. optional single revision loop
- 10. write final summary
+  4. policy check on selected files (local)
+  5. planner agent -> plan
+  6. create git branch
+  7. implementation agent -> code edits
+  8. run tests (local)
+  9. reviewer agent -> JSON review (sees only the diff)
+ 10. optional single revision loop
+ 11. write final summary
+
+Every step that would call an external agent first records cost in the
+BudgetManager and writes a corresponding artifact under .agentforge/runs/.
+
+When ``dry_run=True``, no agent CLI is invoked, no branch is created, and no
+files are modified. The run still produces all artifacts (with placeholders
+explaining what was skipped) so it's a faithful preview of what a real run
+would do.
 """
 
 from __future__ import annotations
@@ -27,6 +36,8 @@ from .budget import BudgetExceeded, BudgetManager
 from .config import Config
 from .context_builder import BuiltContext, build_context, summarize_repo
 from .logger import RunLogger
+from .policy import PolicyEngine, PolicyReport
+from .risk_engine import RiskEngine, RiskLevel, RiskReport
 from .prompts.implementation_prompt import build_implementation_prompt
 from .prompts.planning_prompt import build_planning_prompt
 from .prompts.review_prompt import build_review_prompt
@@ -52,6 +63,9 @@ class RunResult:
     review: dict | None
     budget: dict
     final_summary: str
+    policy_report: dict | None = None
+    risk_report: dict | None = None
+    dry_run: bool = False
     aborted_reason: str | None = None
 
     def to_dict(self) -> dict:
@@ -65,6 +79,9 @@ class RunResult:
             "diff_stats": self.diff_stats,
             "test_passed": self.test_passed,
             "review": self.review,
+            "policy_report": self.policy_report,
+            "risk_report": self.risk_report,
+            "dry_run": self.dry_run,
             "budget": self.budget,
             "aborted_reason": self.aborted_reason,
         }
@@ -74,7 +91,7 @@ class RunResult:
 class Orchestrator:
     config: Config
     cwd: Path = field(default_factory=lambda: Path("."))
-    approval_fn: ApprovalFn | None = None      # called for risky decisions
+    approval_fn: ApprovalFn | None = None
     on_event: Callable[[str], None] | None = None
 
     # --- agent factory -------------------------------------------------
@@ -90,6 +107,9 @@ class Orchestrator:
     def _emit(self, msg: str) -> None:
         if self.on_event:
             self.on_event(msg)
+
+    def _policy_engine(self) -> PolicyEngine:
+        return PolicyEngine.from_config_list(self.config.policies)
 
     # --- shared steps --------------------------------------------------
     def _scan(self, local: LocalAgent) -> RepoSummary:
@@ -118,8 +138,82 @@ class Orchestrator:
             self._emit(f"[{agent.name}] returned error (exit={resp.exit_code}): {resp.error}")
         return resp
 
+    def _emit_planned_workflow(
+        self,
+        mode: str,
+        classification: Classification | None,
+    ) -> None:
+        """For dry-run: announce the steps the run *would* take, in order."""
+        steps: list[str] = ["Local scan"]
+        if mode != "review":
+            steps.append("Task classification")
+            steps.append("Context selection")
+        steps.append("Policy check")
+        steps.append("Risk assessment")
+
+        if mode == "plan":
+            planner = classification.routing.planner if classification else None
+            if planner:
+                steps.append(f"{planner.capitalize()} planning prompt would be generated")
+        elif mode == "solve":
+            planner = classification.routing.planner if classification else None
+            implementer = (
+                classification.routing.implementer if classification else None
+            ) or self.config.agents.implementer
+            reviewer = (
+                classification.routing.reviewer if classification else None
+            ) or self.config.agents.reviewer
+            if planner:
+                steps.append(f"{planner.capitalize()} planning prompt would be generated")
+            steps.append(f"{implementer.capitalize()} implementation prompt would be generated")
+            steps.append("Tests would run")
+            if reviewer:
+                steps.append(f"{reviewer.capitalize()} diff review prompt would be generated")
+        elif mode == "review":
+            steps = ["Read current git diff", "Risk assessment", "Policy check"]
+            steps.append(
+                f"{self.config.agents.reviewer.capitalize()} diff review prompt would be generated"
+            )
+
+        self._emit("Dry run: enabled")
+        self._emit("No external agents will be called.")
+        self._emit("No files will be modified.")
+        self._emit("")
+        self._emit("Planned workflow:")
+        for i, step in enumerate(steps, 1):
+            self._emit(f"  {i}. {step}")
+        self._emit("")
+
+    def _assess_risk(
+        self,
+        task: str,
+        selected_paths: list[str],
+        logger: RunLogger,
+    ) -> RiskReport:
+        report = RiskEngine().assess(task, selected_paths)
+        logger.save_risk_report(report.to_dict())
+        for line in report.human_summary():
+            self._emit(line)
+        return report
+
+    def _apply_policies(
+        self,
+        selected_paths: list[str],
+    ) -> tuple[list[str], PolicyReport]:
+        engine = self._policy_engine()
+        kept, blocked = engine.filter_blocked(selected_paths)
+        report = engine.evaluate(selected_paths)
+        # Make sure blocked hits from filter_blocked are reflected in report too.
+        seen = {(h.path, h.policy) for h in report.blocked_files}
+        for hit in blocked:
+            if (hit.path, hit.policy) not in seen:
+                report.blocked_files.append(hit)
+        for line in report.human_summary():
+            self._emit(line)
+        return kept, report
+
     # --- plan-only flow -----------------------------------------------
-    def plan_only(self, task: str) -> RunResult:
+    def plan_only(self, task: str, dry_run: bool = False) -> RunResult:
         logger = RunLogger()
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
@@ -127,78 +221,42 @@ class Orchestrator:
         summary = self._scan(local)
         classification = self._classify(task)
 
-        logger.save_task({"task": task, "mode": "plan"})
+        if dry_run:
+            self._emit_planned_workflow(mode="plan", classification=classification)
+
+        logger.save_task({"task": task, "mode": "plan", "dry_run": dry_run,
+                          "classification": classification.to_dict()})
         logger.save_repo_summary(summary.to_dict())
 
         context = build_context(local, summary, task, self.config)
-        planner_kind = classification.routing.planner or self.config.agents.planner
-        planner = self._agent(planner_kind)
+        kept_paths, policy_report = self._apply_policies(context.selected_paths)
+        context = self._drop_blocked_from_context(context, kept_paths)
+        budget.record_files_sent(len(context.selected_files))
+        logger.save_selected_files([{"path": p, "chars": len(c)} for p, c in context.selected_files])
+        logger.save_policy_report(policy_report.to_dict())
 
-        prompt = build_planning_prompt(
+        risk_report = self._assess_risk(task, context.selected_paths, logger)
+
+        planner_kind = classification.routing.planner or self.config.agents.planner
+        planning_prompt = build_planning_prompt(
             task=task,
             task_type=classification.task_type.value,
             repo_summary=context.repo_summary_text,
             relevant_files=context.selected_paths,
         )
+        logger.save_prompts({"planner": planning_prompt})
 
-        plan = ""
-        aborted = None
-        try:
-            resp = self._call_agent(budget, planner, prompt, role="planner")
-            if resp.ok:
-                plan = resp.output
-            else:
-                aborted = resp.error or f"planner exit {resp.exit_code}"
-        except (BudgetExceeded, AgentUnavailable) as exc:
-            aborted = str(exc)
-
-        logger.save_plan(plan or f"(planning failed: {aborted})")
-        logger.save_budget(budget.snapshot().to_dict())
-
-        final = self._write_summary(
-            logger=logger, task=task, classification=classification, branch=None,
-            diff_text="", diff_stats={"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []},
-            test_result=None, review=None, budget=budget, plan=plan, mode="plan",
-            aborted=aborted,
-        )
-
-        return RunResult(
-            run_id=logger.run_id, run_dir=logger.dir, task=task,
-            classification=classification.to_dict(), plan=plan, branch=None,
-            diff_stats={"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []},
-            test_passed=None, review=None, budget=budget.snapshot().to_dict(),
-            final_summary=final, aborted_reason=aborted,
-        )
-
-    # --- full solve flow -----------------------------------------------
-    def solve(self, task: str) -> RunResult:
-        logger = RunLogger()
-        budget = BudgetManager(self.config)
-        local = LocalAgent(config=self.config, cwd=self.cwd)
-
-        summary = self._scan(local)
-        classification = self._classify(task)
-        logger.save_task({"task": task, "mode": "solve", "classification": classification.to_dict()})
-        logger.save_repo_summary(summary.to_dict())
-
-        context = build_context(local, summary, task, self.config)
-        self._emit(
-            f"Context: {len(context.selected_files)} files, "
-            f"{context.total_chars} chars (truncated={context.truncated})"
-        )
-
-        # Step 1 — Plan (if routing calls for one).
         plan = ""
         aborted: str | None = None
-        if classification.routing.planner:
+        if dry_run:
+            self._emit(
+                f"DRY-RUN — would call {planner_kind} as planner with "
+                f"{len(planning_prompt)} chars. No call made."
+            )
+            plan = self._dry_run_plan_placeholder(planner_kind, planning_prompt)
+        else:
             try:
-                planner = self._agent(classification.routing.planner)
-                planning_prompt = build_planning_prompt(
-                    task=task,
-                    task_type=classification.task_type.value,
-                    repo_summary=context.repo_summary_text,
-                    relevant_files=context.selected_paths,
-                )
+                planner = self._agent(planner_kind)
                 resp = self._call_agent(budget, planner, planning_prompt, role="planner")
                 if resp.ok:
                     plan = resp.output
@@ -206,82 +264,252 @@ class Orchestrator:
                     aborted = resp.error or f"planner exit {resp.exit_code}"
             except (BudgetExceeded, AgentUnavailable) as exc:
                 aborted = str(exc)
+                self._emit(f"Aborting plan: {exc}. Try `--dry-run` to preview without calling an agent.")
+
+        logger.save_plan(plan or f"(planning failed: {aborted})")
+        if aborted:
+            budget.mark_stopped_early(True)
+        logger.save_budget(budget.snapshot().to_dict())
+
+        final = self._write_summary(
+            logger=logger, task=task, classification=classification, branch=None,
+            diff_text="", diff_stats={"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []},
+            test_result=None, review=None, policy_report=policy_report,
+            risk_report=risk_report, budget=budget,
+            plan=plan, mode=("plan-dry-run" if dry_run else "plan"), aborted=aborted,
+        )
+
+        logger.fill_missing_placeholders(
+            reason=("dry-run preview" if dry_run else (aborted or "plan-only mode"))
+        )
+
+        return RunResult(
+            run_id=logger.run_id, run_dir=logger.dir, task=task,
+            classification=classification.to_dict(), plan=plan, branch=None,
+            diff_stats={"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []},
+            test_passed=None, review=None,
+            policy_report=policy_report.to_dict(),
+            risk_report=risk_report.to_dict(),
+            dry_run=dry_run,
+            budget=budget.snapshot().to_dict(),
+            final_summary=final, aborted_reason=aborted,
+        )
+
+    # --- full solve flow -----------------------------------------------
+    def solve(self, task: str, dry_run: bool = False) -> RunResult:
+        logger = RunLogger()
+        budget = BudgetManager(self.config)
+        local = LocalAgent(config=self.config, cwd=self.cwd)
+
+        summary = self._scan(local)
+        classification = self._classify(task)
+
+        if dry_run:
+            self._emit_planned_workflow(mode="solve", classification=classification)
+
+        logger.save_task({"task": task, "mode": "solve", "dry_run": dry_run,
+                          "classification": classification.to_dict()})
+        logger.save_repo_summary(summary.to_dict())
+
+        context = build_context(local, summary, task, self.config)
+        kept_paths, policy_report = self._apply_policies(context.selected_paths)
+        context = self._drop_blocked_from_context(context, kept_paths)
+        budget.record_files_sent(len(context.selected_files))
+
+        self._emit(
+            f"Context: {len(context.selected_files)} files, "
+            f"{context.total_chars} chars (truncated={context.truncated})"
+        )
+
+        logger.save_selected_files([{"path": p, "chars": len(c)} for p, c in context.selected_files])
+        logger.save_policy_report(policy_report.to_dict())
+
+        risk_report = self._assess_risk(task, context.selected_paths, logger)
+
+        # Honour policy + risk escalation: force review on even if the classifier wouldn't.
+        force_review = policy_report.require_review or risk_report.review_required
+
+        # Combine both sources for the human-approval gate.
+        approval_required = (
+            policy_report.require_human_approval or risk_report.human_approval_required
+        )
+
+        # Honour human approval gate (skipped in dry-run by definition).
+        if not dry_run and approval_required:
+            if self.approval_fn is None:
+                self._emit("Approval gate triggered but no approval_fn is wired.")
+            else:
+                gate_reason = (
+                    "Risk and policy"
+                    if (policy_report.require_human_approval and risk_report.human_approval_required)
+                    else ("Risk" if risk_report.human_approval_required else "Policy")
+                )
+                ok = self.approval_fn(
+                    f"{gate_reason} requires human approval before continuing. Proceed?"
+                )
+                if not ok:
+                    aborted = "human approval declined"
+                    return self._finalize_aborted(
+                        logger, budget, task, classification, plan="",
+                        branch=None, aborted=aborted, diff_text="",
+                        test_result=None, review=None, policy_report=policy_report,
+                        risk_report=risk_report, dry_run=dry_run,
+                    )
+
+        # Build prompts up front so they're recorded even in dry-run.
+        planning_prompt = build_planning_prompt(
+            task=task,
+            task_type=classification.task_type.value,
+            repo_summary=context.repo_summary_text,
+            relevant_files=context.selected_paths,
+        )
+        impl_prompt = build_implementation_prompt(
+            task=task,
+            plan="(filled in after planning)",
+            files=context.selected_files,
+            max_chars_per_file=self.config.max_chars_per_file,
+            secret_files=self.config.secret_files,
+        )
+        prompts_blob: dict[str, str] = {
+            "planner": planning_prompt,
+            "implementer_template": impl_prompt,
+        }
+
+        # Step 1 — Plan (if routing calls for one).
+        plan = ""
+        aborted: str | None = None
+        planner_kind = classification.routing.planner
+        if planner_kind:
+            if dry_run:
+                self._emit(
+                    f"DRY-RUN — would call {planner_kind} as planner with "
+                    f"{len(planning_prompt)} chars. No call made."
+                )
+                plan = self._dry_run_plan_placeholder(planner_kind, planning_prompt)
+            else:
+                try:
+                    planner = self._agent(planner_kind)
+                    resp = self._call_agent(budget, planner, planning_prompt, role="planner")
+                    if resp.ok:
+                        plan = resp.output
+                    else:
+                        aborted = resp.error or f"planner exit {resp.exit_code}"
+                except (BudgetExceeded, AgentUnavailable) as exc:
+                    aborted = str(exc)
+                    self._emit(f"Planner unavailable: {exc}. Try `--dry-run` to preview the pipeline without calling an agent.")
         else:
             plan = "(no planning step — task type routed straight to implementation)"
 
         logger.save_plan(plan)
+        prompts_blob["implementer"] = build_implementation_prompt(
+            task=task,
+            plan=plan,
+            files=context.selected_files,
+            max_chars_per_file=self.config.max_chars_per_file,
+            secret_files=self.config.secret_files,
+        )
+        logger.save_prompts(prompts_blob)
 
         if aborted:
+            budget.mark_stopped_early(True)
             return self._finalize_aborted(
                 logger, budget, task, classification, plan, branch=None,
                 aborted=aborted, diff_text="", test_result=None, review=None,
+                policy_report=policy_report, risk_report=risk_report, dry_run=dry_run,
             )
 
-        # Step 2 — git branch.
-        branch = self._maybe_create_branch(task)
+        # Step 2 — git branch (skipped in dry-run).
+        branch: str | None = None
+        if dry_run:
+            self._emit("DRY-RUN — skipping git branch creation.")
+        else:
+            branch = self._maybe_create_branch(task)
 
         # Step 3 — Implementation.
-        try:
-            implementer = self._agent(classification.routing.implementer or self.config.agents.implementer)
-            impl_prompt = build_implementation_prompt(
-                task=task,
-                plan=plan,
-                files=context.selected_files,
-                max_chars_per_file=self.config.max_chars_per_file,
-                secret_files=self.config.secret_files,
+        implementer_kind = classification.routing.implementer or self.config.agents.implementer
+        if dry_run:
+            self._emit(
+                f"DRY-RUN — would call {implementer_kind} as implementer with "
+                f"{len(prompts_blob['implementer'])} chars. No call made."
             )
-            impl_resp = self._call_agent(budget, implementer, impl_prompt, role="implementer")
-            if not impl_resp.ok:
-                aborted = impl_resp.error or f"implementer exit {impl_resp.exit_code}"
-        except (BudgetExceeded, AgentUnavailable) as exc:
-            aborted = str(exc)
+            test_result = None
+            diff_text = ""
+            stats = {"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []}
+            review_json: dict | None = None
+            budget.mark_stopped_early(True)
+        else:
+            try:
+                implementer = self._agent(implementer_kind)
+                impl_resp = self._call_agent(
+                    budget, implementer, prompts_blob["implementer"], role="implementer"
+                )
+                if not impl_resp.ok:
+                    aborted = impl_resp.error or f"implementer exit {impl_resp.exit_code}"
+            except (BudgetExceeded, AgentUnavailable) as exc:
+                aborted = str(exc)
+                self._emit(f"Implementer unavailable: {exc}. Try `--dry-run` to preview without calling an agent.")
 
-        if aborted:
-            return self._finalize_aborted(
-                logger, budget, task, classification, plan, branch=branch,
-                aborted=aborted, diff_text="", test_result=None, review=None,
-            )
+            if aborted:
+                budget.mark_stopped_early(True)
+                return self._finalize_aborted(
+                    logger, budget, task, classification, plan, branch=branch,
+                    aborted=aborted, diff_text="", test_result=None, review=None,
+                    policy_report=policy_report, risk_report=risk_report, dry_run=dry_run,
+                )
 
-        # Step 4 — tests + diff.
-        test_result = local.run_tests()
-        logger.save_test_result(test_result.to_text())
+            # Step 4 — tests + diff.
+            test_result = local.run_tests()
+            logger.save_test_result(test_result.to_text())
 
-        diff_text = local.git_diff()
-        logger.save_diff(diff_text)
-        stats = diff_tools.parse_diff_stats(diff_text).to_dict()
+            diff_text = local.git_diff()
+            logger.save_diff(diff_text)
+            stats = diff_tools.parse_diff_stats(diff_text).to_dict()
 
-        # Step 5 — review (one optional revision loop).
-        review_json: dict | None = None
-        if self._needs_review(classification, test_result, stats):
-            review_json = self._review(budget, classification, task, plan, diff_text, test_result, logger)
+            # Step 5 — review (one optional revision loop).
+            review_json = None
+            if self._needs_review(classification, test_result, stats, force_review):
+                review_json = self._review(budget, classification, task, plan, diff_text, test_result, logger)
 
-            if (
-                review_json
-                and review_json.get("status") == "needs_changes"
-                and budget.can_start_review_loop()
-            ):
-                budget.record_review_loop()
-                self._emit("Review requested changes — running one revision loop.")
-                try:
-                    implementer = self._agent(classification.routing.implementer or self.config.agents.implementer)
-                    revision_prompt = self._build_revision_prompt(task, plan, diff_text, review_json)
-                    rev_resp = self._call_agent(budget, implementer, revision_prompt, role="implementer-revision")
-                    if rev_resp.ok:
-                        test_result = local.run_tests()
-                        logger.save_test_result(test_result.to_text())
-                        diff_text = local.git_diff()
-                        logger.save_diff(diff_text)
-                        stats = diff_tools.parse_diff_stats(diff_text).to_dict()
-                        review_json = self._review(budget, classification, task, plan, diff_text, test_result, logger)
-                except (BudgetExceeded, AgentUnavailable) as exc:
-                    self._emit(f"Revision loop skipped: {exc}")
+                if (
+                    review_json
+                    and review_json.get("status") == "needs_changes"
+                    and budget.can_start_review_loop()
+                ):
+                    budget.record_review_loop()
+                    self._emit("Review requested changes — running one revision loop.")
+                    try:
+                        implementer = self._agent(implementer_kind)
+                        revision_prompt = self._build_revision_prompt(task, plan, diff_text, review_json)
+                        rev_resp = self._call_agent(budget, implementer, revision_prompt, role="implementer-revision")
+                        if rev_resp.ok:
+                            test_result = local.run_tests()
+                            logger.save_test_result(test_result.to_text())
+                            diff_text = local.git_diff()
+                            logger.save_diff(diff_text)
+                            stats = diff_tools.parse_diff_stats(diff_text).to_dict()
+                            review_json = self._review(budget, classification, task, plan, diff_text, test_result, logger)
+                    except (BudgetExceeded, AgentUnavailable) as exc:
+                        self._emit(f"Revision loop skipped: {exc}")
+
+            # If we made it here without forcing review and tests passed, the run
+            # ended on the early-stop path. That's a feature, not stoppage.
+            if review_json is None and test_result and test_result.passed:
+                self._emit("Tests passed and review wasn't required — early stop (saved an AI call).")
+                budget.mark_stopped_early(True)
 
         logger.save_budget(budget.snapshot().to_dict())
 
         final = self._write_summary(
             logger=logger, task=task, classification=classification, branch=branch,
             diff_text=diff_text, diff_stats=stats, test_result=test_result,
-            review=review_json, budget=budget, plan=plan, mode="solve", aborted=None,
+            review=review_json, policy_report=policy_report,
+            risk_report=risk_report,
+            budget=budget, plan=plan,
+            mode=("solve-dry-run" if dry_run else "solve"), aborted=None,
+        )
+
+        logger.fill_missing_placeholders(
+            reason=("dry-run preview — no agent calls made" if dry_run else "step skipped — see final_summary.md")
         )
 
         return RunResult(
@@ -294,61 +522,122 @@ class Orchestrator:
             diff_stats=stats,
             test_passed=test_result.passed if test_result else None,
             review=review_json,
+            policy_report=policy_report.to_dict(),
+            risk_report=risk_report.to_dict(),
+            dry_run=dry_run,
             budget=budget.snapshot().to_dict(),
             final_summary=final,
         )
 
     # --- review-only flow ---------------------------------------------
-    def review_diff_only(self, task: str | None = None) -> RunResult:
+    def review_diff_only(self, task: str | None = None, dry_run: bool = False) -> RunResult:
         logger = RunLogger()
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
         if not git_tools.is_git_repo(self.cwd):
             raise RuntimeError("not a git repo; cannot review diff")
+
+        if dry_run:
+            self._emit_planned_workflow(mode="review", classification=None)
+
         diff_text = local.git_diff()
         if not diff_text.strip():
             self._emit("No diff to review.")
         logger.save_diff(diff_text)
+        logger.save_task({"task": task or "", "mode": "review", "dry_run": dry_run})
 
-        reviewer = self._agent(self.config.agents.reviewer)
+        # No file context in review-only mode, so policy evaluation is over an
+        # empty set. We still emit a (mostly empty) report for consistency.
+        policy_report = self._policy_engine().evaluate([])
+        logger.save_policy_report(policy_report.to_dict())
+
+        # Risk scoring runs on the task description (paths are unknown here).
+        risk_report = self._assess_risk(task or "", [], logger)
+
         prompt = build_review_prompt(
             task=task or "(no task description supplied)",
             plan="(plan not provided to review-only mode)",
             diff=diff_text,
             test_result="(tests not run in review-only mode)",
         )
+        logger.save_prompts({"reviewer": prompt})
 
         review_json: dict | None = None
         aborted = None
-        try:
-            resp = self._call_agent(budget, reviewer, prompt, role="reviewer")
-            if resp.ok:
-                review_json = self._parse_review_json(resp.output)
-            else:
-                aborted = resp.error or f"reviewer exit {resp.exit_code}"
-        except (BudgetExceeded, AgentUnavailable) as exc:
-            aborted = str(exc)
+        if dry_run:
+            self._emit(
+                f"DRY-RUN — would call {self.config.agents.reviewer} as reviewer with "
+                f"{len(prompt)} chars on a {len(diff_text)}-char diff. No call made."
+            )
+            budget.mark_stopped_early(True)
+        else:
+            try:
+                reviewer = self._agent(self.config.agents.reviewer)
+                resp = self._call_agent(budget, reviewer, prompt, role="reviewer")
+                if resp.ok:
+                    review_json = self._parse_review_json(resp.output)
+                else:
+                    aborted = resp.error or f"reviewer exit {resp.exit_code}"
+            except (BudgetExceeded, AgentUnavailable) as exc:
+                aborted = str(exc)
+                self._emit(f"Reviewer unavailable: {exc}. Try `--dry-run` to preview.")
 
         if review_json:
             logger.save_review(review_json)
+        if aborted:
+            budget.mark_stopped_early(True)
         logger.save_budget(budget.snapshot().to_dict())
 
         stats = diff_tools.parse_diff_stats(diff_text).to_dict()
         final = self._write_summary(
             logger=logger, task=task or "", classification=None, branch=None,
             diff_text=diff_text, diff_stats=stats, test_result=None,
-            review=review_json, budget=budget, plan="", mode="review", aborted=aborted,
+            review=review_json, policy_report=policy_report,
+            risk_report=risk_report,
+            budget=budget, plan="",
+            mode=("review-dry-run" if dry_run else "review"), aborted=aborted,
         )
+
+        logger.fill_missing_placeholders(
+            reason=("dry-run preview — no agent calls made" if dry_run else "review-only mode")
+        )
+
         return RunResult(
             run_id=logger.run_id, run_dir=logger.dir, task=task or "",
             classification={}, plan="", branch=None, diff_stats=stats,
             test_passed=None, review=review_json,
+            policy_report=policy_report.to_dict(),
+            risk_report=risk_report.to_dict(),
+            dry_run=dry_run,
             budget=budget.snapshot().to_dict(), final_summary=final,
             aborted_reason=aborted,
         )
 
     # --- helpers ------------------------------------------------------
+    @staticmethod
+    def _drop_blocked_from_context(context: BuiltContext, kept_paths: list[str]) -> BuiltContext:
+        if len(kept_paths) == len(context.selected_paths):
+            return context
+        kept_set = set(kept_paths)
+        kept_files = [(p, c) for p, c in context.selected_files if p in kept_set]
+        total = sum(len(c) for _, c in kept_files)
+        return BuiltContext(
+            repo_summary_text=context.repo_summary_text,
+            selected_files=kept_files,
+            selected_paths=[p for p, _ in kept_files],
+            total_chars=total,
+            truncated=context.truncated,
+        )
+
+    @staticmethod
+    def _dry_run_plan_placeholder(planner_kind: str, prompt: str) -> str:
+        return (
+            f"(dry-run preview — no plan generated)\n\n"
+            f"Would call planner: **{planner_kind}**\n"
+            f"Prompt size: {len(prompt)} chars\n"
+        )
+
     def _maybe_create_branch(self, task: str) -> str | None:
         if not git_tools.is_git_repo(self.cwd):
             self._emit("Not a git repo — skipping branch creation.")
@@ -369,7 +658,15 @@ class Orchestrator:
             self._emit(f"Could not create branch {branch}: {exc}")
             return git_tools.current_branch(self.cwd)
 
-    def _needs_review(self, classification: Classification, test_result: TestResult, stats: dict) -> bool:
+    def _needs_review(
+        self,
+        classification: Classification,
+        test_result: TestResult,
+        stats: dict,
+        force_review: bool = False,
+    ) -> bool:
+        if force_review:
+            return True
         if classification.routing.require_review:
             return True
         if not test_result.passed:
@@ -392,7 +689,6 @@ class Orchestrator:
     ) -> dict | None:
         reviewer_kind = classification.routing.reviewer or self.config.agents.reviewer
         reviewer = self._agent(reviewer_kind)
-        # Cap diff size for reviewer to avoid runaway prompts.
         max_diff_chars = max(2000, self.config.max_total_chars // 2)
         capped_diff = diff_tools.truncate_diff(diff_text, max_diff_chars)
         prompt = build_review_prompt(
@@ -415,14 +711,12 @@ class Orchestrator:
     def _parse_review_json(text: str) -> dict | None:
         if not text:
             return None
-        # Reviewers occasionally wrap JSON in code fences; strip them.
         cleaned = text.strip()
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Try to extract the first JSON object from the text.
             match = re.search(r"\{.*\}", cleaned, re.DOTALL)
             if not match:
                 return {"status": "needs_changes", "risk_level": "medium",
@@ -463,6 +757,8 @@ class Orchestrator:
         diff_stats: dict,
         test_result: TestResult | None,
         review: dict | None,
+        policy_report: PolicyReport | None,
+        risk_report: RiskReport | None,
         budget: BudgetManager,
         plan: str,
         mode: str,
@@ -481,6 +777,16 @@ class Orchestrator:
         if aborted:
             lines.append(f"- aborted: {aborted}")
         lines.append("")
+        if risk_report:
+            lines.append("## Risk")
+            for ln in risk_report.human_summary():
+                lines.append(ln)
+            lines.append("")
+        if policy_report:
+            lines.append("## Policy")
+            for ln in policy_report.human_summary():
+                lines.append(ln)
+            lines.append("")
         if plan:
             lines.append("## Plan")
             lines.append(plan)
@@ -508,10 +814,8 @@ class Orchestrator:
                     lines.append(f"  - **{issue.get('file', '?')}**: {issue.get('problem', '')}")
             lines.append("")
         snap = budget.snapshot()
-        lines.append("## Budget")
-        lines.append(f"- ai_calls: {snap.ai_calls}/{snap.max_ai_calls}")
-        lines.append(f"- review_loops: {snap.review_loops}/{snap.max_review_loops}")
-        lines.append(f"- chars_sent: {snap.chars_sent}/{snap.max_total_chars}")
+        for ln in snap.human_summary():
+            lines.append(ln)
 
         text = "\n".join(lines)
         logger.save_final_summary(text)
@@ -529,7 +833,11 @@ class Orchestrator:
         diff_text: str,
         test_result: TestResult | None,
         review: dict | None,
+        policy_report: PolicyReport | None = None,
+        risk_report: RiskReport | None = None,
+        dry_run: bool = False,
     ) -> RunResult:
+        budget.mark_stopped_early(True)
         logger.save_budget(budget.snapshot().to_dict())
         stats = diff_tools.parse_diff_stats(diff_text).to_dict() if diff_text else {
             "files_changed": 0, "additions": 0, "deletions": 0, "file_list": [],
@@ -537,12 +845,20 @@ class Orchestrator:
         final = self._write_summary(
             logger=logger, task=task, classification=classification, branch=branch,
             diff_text=diff_text, diff_stats=stats, test_result=test_result,
-            review=review, budget=budget, plan=plan, mode="solve", aborted=aborted,
+            review=review, policy_report=policy_report,
+            risk_report=risk_report,
+            budget=budget, plan=plan, mode="solve", aborted=aborted,
         )
+        logger.fill_missing_placeholders(reason=aborted)
         return RunResult(
             run_id=logger.run_id, run_dir=logger.dir, task=task,
-            classification=classification.to_dict(), plan=plan, branch=branch,
+            classification=classification.to_dict() if classification else {},
+            plan=plan, branch=branch,
             diff_stats=stats, test_passed=test_result.passed if test_result else None,
-            review=review, budget=budget.snapshot().to_dict(),
+            review=review,
+            policy_report=policy_report.to_dict() if policy_report else None,
+            risk_report=risk_report.to_dict() if risk_report else None,
+            dry_run=dry_run,
+            budget=budget.snapshot().to_dict(),
             final_summary=final, aborted_reason=aborted,
         )

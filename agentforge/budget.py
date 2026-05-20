@@ -20,19 +20,35 @@ class BudgetSnapshot:
     ai_calls: int
     review_loops: int
     chars_sent: int
+    files_sent: int
     max_ai_calls: int
     max_review_loops: int
     max_total_chars: int
+    max_files_sent: int
+    stopped_early: bool = False
 
     def to_dict(self) -> dict:
         return {
             "ai_calls": self.ai_calls,
             "review_loops": self.review_loops,
             "chars_sent": self.chars_sent,
+            "files_sent": self.files_sent,
             "max_ai_calls": self.max_ai_calls,
             "max_review_loops": self.max_review_loops,
             "max_total_chars": self.max_total_chars,
+            "max_files_sent": self.max_files_sent,
+            "stopped_early": self.stopped_early,
         }
+
+    def human_summary(self) -> list[str]:
+        return [
+            "Budget:",
+            f"- AI calls: {self.ai_calls}/{self.max_ai_calls}",
+            f"- Review loops: {self.review_loops}/{self.max_review_loops}",
+            f"- Files sent: {self.files_sent}/{self.max_files_sent}",
+            f"- Estimated chars sent: {self.chars_sent:,}",
+            f"- Stopped early: {'yes' if self.stopped_early else 'no'}",
+        ]
 
 
 @dataclass
@@ -41,6 +57,8 @@ class BudgetManager:
     ai_calls: int = 0
     review_loops: int = 0
     chars_sent: int = 0
+    files_sent: int = 0
+    stopped_early: bool = False
     call_log: list[dict] = field(default_factory=list)
 
     # --- Limits --------------------------------------------------------
@@ -101,13 +119,23 @@ class BudgetManager:
             )
         self.review_loops += 1
 
+    def record_files_sent(self, n: int) -> None:
+        # Tracks the largest selected-file set seen across the run.
+        self.files_sent = max(self.files_sent, n)
+
+    def mark_stopped_early(self, value: bool = True) -> None:
+        self.stopped_early = value
+
     # --- Reporting -----------------------------------------------------
     def snapshot(self) -> BudgetSnapshot:
         return BudgetSnapshot(
             ai_calls=self.ai_calls,
             review_loops=self.review_loops,
             chars_sent=self.chars_sent,
+            files_sent=self.files_sent,
             max_ai_calls=self.max_ai_calls,
             max_review_loops=self.max_review_loops,
             max_total_chars=self.max_total_chars,
+            max_files_sent=self.max_files_sent,
+            stopped_early=self.stopped_early,
         )

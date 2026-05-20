@@ -1,0 +1,16 @@
+{
+  "task": "Add Stripe webhook signature verification to the billing handler",
+  "mode": "solve",
+  "dry_run": false,
+  "classification": {
+    "task_type": "security",
+    "confidence": 0.8,
+    "keywords_matched": ["security", "auth "],
+    "routing": {
+      "planner": "claude",
+      "implementer": "codex",
+      "reviewer": "claude",
+      "require_review": true
+    }
+  }
+}
