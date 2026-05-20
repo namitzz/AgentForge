@@ -114,6 +114,7 @@ class RiskReport:
     reasons: list[str] = field(default_factory=list)
     recommended_workflow: list[str] = field(default_factory=list)
     review_required: bool = False
+    tests_required: bool = False
     human_approval_required: bool = False
     keyword_matches: dict[str, list[str]] = field(default_factory=dict)
     path_matches: dict[str, list[str]] = field(default_factory=dict)
@@ -125,6 +126,7 @@ class RiskReport:
             "reasons": list(self.reasons),
             "recommended_workflow": list(self.recommended_workflow),
             "review_required": self.review_required,
+            "tests_required": self.tests_required,
             "human_approval_required": self.human_approval_required,
             "keyword_matches": {k: list(v) for k, v in self.keyword_matches.items()},
             "path_matches": {k: list(v) for k, v in self.path_matches.items()},
@@ -181,8 +183,8 @@ def _score_to_level(score: int) -> RiskLevel:
     return RiskLevel.LOW
 
 
-def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool]:
-    """Map a level to (workflow steps, review_required, human_approval_required)."""
+def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool, bool]:
+    """Map a level to (workflow steps, review_required, tests_required, human_approval_required)."""
     if level == RiskLevel.HIGH:
         return (
             [
@@ -192,8 +194,9 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool]:
                 "Claude diff review required",
                 "Human approval required before merge",
             ],
-            True,
-            True,
+            True,   # review_required
+            True,   # tests_required
+            True,   # human_approval_required
         )
     if level == RiskLevel.MEDIUM:
         return (
@@ -203,6 +206,7 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool]:
                 "Tests recommended",
                 "Claude diff review recommended",
             ],
+            True,
             True,
             False,
         )
@@ -214,6 +218,7 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool]:
             "Optional diff review",
             "No human approval gate required",
         ],
+        False,
         False,
         False,
     )
@@ -290,7 +295,7 @@ class RiskEngine:
         score = max(0, min(100, score))
 
         level = _score_to_level(score)
-        workflow, review_required, approval_required = _recommend_workflow(level)
+        workflow, review_required, tests_required, approval_required = _recommend_workflow(level)
 
         if not reasons:
             reasons.append("No specific risk signals matched — defaulted by score")
@@ -301,6 +306,7 @@ class RiskEngine:
             reasons=reasons,
             recommended_workflow=workflow,
             review_required=review_required,
+            tests_required=tests_required,
             human_approval_required=approval_required,
             keyword_matches=keyword_hits,
             path_matches=path_hits,

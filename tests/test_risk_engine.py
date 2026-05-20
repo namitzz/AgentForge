@@ -68,9 +68,19 @@ def test_to_dict_has_required_fields():
         "reasons",
         "recommended_workflow",
         "review_required",
+        "tests_required",
         "human_approval_required",
     ):
         assert key in d
+
+
+def test_tests_required_flag_tracks_level():
+    low = assess_risk("Fix typo in README", ["README.md"])
+    med = assess_risk("Refactor the user profile component", ["src/components/UserProfile.tsx"])
+    high = assess_risk("Add password reset to login flow", ["auth/login.py"])
+    assert low.tests_required is False
+    assert med.tests_required is True
+    assert high.tests_required is True
 
 
 def test_human_summary_includes_level_and_score():

@@ -329,6 +329,17 @@ class Orchestrator:
         # Honour policy + risk escalation: force review on even if the classifier wouldn't.
         force_review = policy_report.require_review or risk_report.review_required
 
+        # Surface a clear warning if tests are required by policy or risk but
+        # the user has no test command configured.
+        tests_required = (
+            policy_report.require_tests or risk_report.tests_required
+        )
+        if tests_required and not (self.config.default_test_command or "").strip():
+            self._emit(
+                "WARNING: tests are required for this run (policy/risk) but "
+                "default_test_command is empty in config.yaml."
+            )
+
         # Combine both sources for the human-approval gate.
         approval_required = (
             policy_report.require_human_approval or risk_report.human_approval_required
