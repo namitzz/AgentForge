@@ -218,6 +218,9 @@ def _print_result(result: RunResult, show_plan: bool) -> None:
     if show_plan and result.plan:
         console.print(Panel(result.plan, title="Plan", border_style="cyan"))
     console.print(result.final_summary)
+    console.print(
+        f"\n[green]Run artifacts saved to:[/green]\n  {result.run_dir}{'/' if not str(result.run_dir).endswith('/') else ''}"
+    )
     if result.aborted_reason and (
         "not found on PATH" in result.aborted_reason
         or "agent command is empty" in result.aborted_reason

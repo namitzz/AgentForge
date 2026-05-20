@@ -81,6 +81,25 @@ def test_plan_dry_run_does_not_call_agent(sample_repo, base_config, monkeypatch)
     assert result.budget["ai_calls"] == 0
 
 
+def test_dry_run_emits_budget_estimate(sample_repo, base_config, monkeypatch):
+    events: list[str] = []
+    monkeypatch.chdir(sample_repo)
+    orch = Orchestrator(
+        config=base_config,
+        cwd=sample_repo,
+        on_event=lambda msg: events.append(msg),
+    )
+    result = orch.solve("add caching to user lookup", dry_run=True)
+    joined = "\n".join(events)
+    assert "Budget estimate:" in joined
+    assert "Planned AI calls:" in joined
+    assert "Files selected:" in joined
+    assert "Estimated chars sent:" in joined
+    assert "Dry run: yes" in joined
+    # The final summary should also include a stop reason for dry-run.
+    assert result.budget["stop_reason"]
+
+
 def test_dry_run_emits_planned_workflow(sample_repo, base_config, monkeypatch):
     events: list[str] = []
     monkeypatch.chdir(sample_repo)

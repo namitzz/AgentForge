@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m agentforge --help)"
+      "Bash(python -m agentforge --help)",
+      "Bash(python -m agentforge solve \"Add password reset to login flow\" --dry-run)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python -c \"import json,pathlib; d=sorted\\(pathlib.Path\\('.agentforge/runs'\\).iterdir\\(\\)\\)[-1]; print\\(json.dumps\\(json.loads\\(\\(d/'budget.json'\\).read_text\\(\\)\\), indent=2\\)\\)\")"
     ]
   }
 }

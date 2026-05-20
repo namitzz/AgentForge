@@ -36,8 +36,9 @@ from .budget import BudgetExceeded, BudgetManager
 from .config import Config
 from .context_builder import BuiltContext, build_context, summarize_repo
 from .logger import RunLogger
-from .policy import PolicyEngine, PolicyReport
+from .policy_engine import PolicyEngine, PolicyReport
 from .risk_engine import RiskEngine, RiskLevel, RiskReport
+from .run_artifacts import RunManifest
 from .prompts.implementation_prompt import build_implementation_prompt
 from .prompts.planning_prompt import build_planning_prompt
 from .prompts.review_prompt import build_review_prompt
@@ -111,6 +112,58 @@ class Orchestrator:
     def _policy_engine(self) -> PolicyEngine:
         return PolicyEngine.from_config_list(self.config.policies)
 
+    def _build_manifest(
+        self,
+        *,
+        logger: RunLogger,
+        mode: str,
+        task: str,
+        dry_run: bool,
+        classification: Classification | None,
+    ) -> RunManifest:
+        if classification is not None:
+            workflow = {
+                "planner": classification.routing.planner,
+                "implementer": (
+                    classification.routing.implementer or self.config.agents.implementer
+                ),
+                "reviewer": (
+                    classification.routing.reviewer or self.config.agents.reviewer
+                ),
+            }
+            classification_dict: dict | None = classification.to_dict()
+        else:
+            workflow = {
+                "planner": None,
+                "implementer": None,
+                "reviewer": self.config.agents.reviewer,
+            }
+            classification_dict = None
+
+        manifest = RunManifest(
+            run_id=logger.run_id,
+            mode=mode,
+            task=task,
+            dry_run=dry_run,
+            agent_workflow=workflow,
+            classification=classification_dict,
+        )
+        logger.save_task(manifest.to_dict())
+        return manifest
+
+    def _finalize_manifest(
+        self,
+        logger: RunLogger,
+        manifest: RunManifest,
+        budget: BudgetManager,
+    ) -> None:
+        snap = budget.snapshot()
+        manifest.finalize(
+            stopped_early=snap.stopped_early,
+            stop_reason=snap.stop_reason,
+        )
+        logger.save_task(manifest.to_dict())
+
     # --- shared steps --------------------------------------------------
     def _scan(self, local: LocalAgent) -> RepoSummary:
         self._emit("Scanning repo...")
@@ -137,6 +190,66 @@ class Orchestrator:
         if not resp.ok:
             self._emit(f"[{agent.name}] returned error (exit={resp.exit_code}): {resp.error}")
         return resp
+
+    @staticmethod
+    def _estimate_reviewer_chars(diff_chars: int) -> int:
+        # Reviewer prompt has the diff + plan + task + system text. Diff is
+        # the dominant variable. Add a fixed overhead.
+        return diff_chars + 2_000
+
+    def _estimate_budget(
+        self,
+        *,
+        classification: Classification | None,
+        planning_prompt_chars: int,
+        impl_prompt_chars: int,
+        mode: str,
+        force_review: bool,
+        review_loops_possible: int,
+        avg_diff_chars: int = 5_000,
+    ) -> tuple[int, int]:
+        """Return (planned_ai_calls, planned_chars_sent) for this run."""
+        planned_calls = 0
+        planned_chars = 0
+
+        # Plan-only flow: one call to the planner if routing wants one.
+        if mode == "plan":
+            if classification and classification.routing.planner:
+                planned_calls += 1
+                planned_chars += planning_prompt_chars
+            return planned_calls, planned_chars
+
+        # Review-only flow.
+        if mode == "review":
+            planned_calls += 1
+            planned_chars += self._estimate_reviewer_chars(avg_diff_chars)
+            return planned_calls, planned_chars
+
+        # Solve flow.
+        if classification and classification.routing.planner:
+            planned_calls += 1
+            planned_chars += planning_prompt_chars
+
+        # Implementation always runs.
+        planned_calls += 1
+        planned_chars += impl_prompt_chars
+
+        # Reviewer if classification or policy/risk force it.
+        reviewer_planned = force_review or bool(
+            classification and classification.routing.reviewer
+        )
+        if reviewer_planned:
+            planned_calls += 1
+            planned_chars += self._estimate_reviewer_chars(avg_diff_chars)
+
+        # Each allowed review loop = up to 2 extra calls (revision + re-review).
+        if reviewer_planned and review_loops_possible > 0:
+            planned_calls += review_loops_possible * 2
+            planned_chars += review_loops_possible * (
+                impl_prompt_chars + self._estimate_reviewer_chars(avg_diff_chars)
+            )
+
+        return planned_calls, planned_chars
 
     def _emit_planned_workflow(
         self,
@@ -224,8 +337,10 @@ class Orchestrator:
         if dry_run:
             self._emit_planned_workflow(mode="plan", classification=classification)
 
-        logger.save_task({"task": task, "mode": "plan", "dry_run": dry_run,
-                          "classification": classification.to_dict()})
+        manifest = self._build_manifest(
+            logger=logger, mode="plan", task=task, dry_run=dry_run,
+            classification=classification,
+        )
         logger.save_repo_summary(summary.to_dict())
 
         context = build_context(local, summary, task, self.config)
@@ -245,6 +360,26 @@ class Orchestrator:
             relevant_files=context.selected_paths,
         )
         logger.save_prompts({"planner": planning_prompt})
+
+        # Budget estimate (plan-only: just the planner call if routing wants one).
+        budget.set_dry_run(dry_run)
+        planned_calls, planned_chars = self._estimate_budget(
+            classification=classification,
+            planning_prompt_chars=len(planning_prompt),
+            impl_prompt_chars=0,
+            mode="plan",
+            force_review=False,
+            review_loops_possible=0,
+        )
+        budget.record_planned(planned_calls, planned_chars)
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        if not dry_run:
+            try:
+                budget.enforce_planned_within_caps()
+            except BudgetExceeded as exc:
+                budget.mark_stopped_early(True, reason=str(exc))
+                self._emit(f"Aborting plan: {exc}")
 
         plan = ""
         aborted: str | None = None
@@ -268,8 +403,11 @@ class Orchestrator:
 
         logger.save_plan(plan or f"(planning failed: {aborted})")
         if aborted:
-            budget.mark_stopped_early(True)
+            budget.mark_stopped_early(True, reason=aborted)
+        elif dry_run:
+            budget.mark_stopped_early(True, reason="dry-run - no agent calls made")
         logger.save_budget(budget.snapshot().to_dict())
+        self._finalize_manifest(logger, manifest, budget)
 
         final = self._write_summary(
             logger=logger, task=task, classification=classification, branch=None,
@@ -307,8 +445,10 @@ class Orchestrator:
         if dry_run:
             self._emit_planned_workflow(mode="solve", classification=classification)
 
-        logger.save_task({"task": task, "mode": "solve", "dry_run": dry_run,
-                          "classification": classification.to_dict()})
+        manifest = self._build_manifest(
+            logger=logger, mode="solve", task=task, dry_run=dry_run,
+            classification=classification,
+        )
         logger.save_repo_summary(summary.to_dict())
 
         context = build_context(local, summary, task, self.config)
@@ -365,6 +505,7 @@ class Orchestrator:
                         branch=None, aborted=aborted, diff_text="",
                         test_result=None, review=None, policy_report=policy_report,
                         risk_report=risk_report, dry_run=dry_run,
+                        manifest=manifest,
                     )
 
         # Build prompts up front so they're recorded even in dry-run.
@@ -385,6 +526,31 @@ class Orchestrator:
             "planner": planning_prompt,
             "implementer_template": impl_prompt,
         }
+
+        # Budget estimate (before any agent call). Always emit, then enforce.
+        budget.set_dry_run(dry_run)
+        planned_calls, planned_chars = self._estimate_budget(
+            classification=classification,
+            planning_prompt_chars=len(planning_prompt),
+            impl_prompt_chars=len(impl_prompt),
+            mode="solve",
+            force_review=force_review,
+            review_loops_possible=self.config.max_review_loops,
+        )
+        budget.record_planned(planned_calls, planned_chars)
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        try:
+            if not dry_run:
+                budget.enforce_planned_within_caps()
+        except BudgetExceeded as exc:
+            return self._finalize_aborted(
+                logger, budget, task, classification, plan="",
+                branch=None, aborted=str(exc), diff_text="",
+                test_result=None, review=None, policy_report=policy_report,
+                risk_report=risk_report, dry_run=dry_run,
+                manifest=manifest,
+            )
 
         # Step 1 — Plan (if routing calls for one).
         plan = ""
@@ -422,11 +588,12 @@ class Orchestrator:
         logger.save_prompts(prompts_blob)
 
         if aborted:
-            budget.mark_stopped_early(True)
+            budget.mark_stopped_early(True, reason=aborted)
             return self._finalize_aborted(
                 logger, budget, task, classification, plan, branch=None,
                 aborted=aborted, diff_text="", test_result=None, review=None,
                 policy_report=policy_report, risk_report=risk_report, dry_run=dry_run,
+                manifest=manifest,
             )
 
         # Step 2 — git branch (skipped in dry-run).
@@ -447,7 +614,7 @@ class Orchestrator:
             diff_text = ""
             stats = {"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []}
             review_json: dict | None = None
-            budget.mark_stopped_early(True)
+            budget.mark_stopped_early(True, reason="dry-run - no agent calls made")
         else:
             try:
                 implementer = self._agent(implementer_kind)
@@ -461,11 +628,12 @@ class Orchestrator:
                 self._emit(f"Implementer unavailable: {exc}. Try `--dry-run` to preview without calling an agent.")
 
             if aborted:
-                budget.mark_stopped_early(True)
+                budget.mark_stopped_early(True, reason=aborted)
                 return self._finalize_aborted(
                     logger, budget, task, classification, plan, branch=branch,
                     aborted=aborted, diff_text="", test_result=None, review=None,
                     policy_report=policy_report, risk_report=risk_report, dry_run=dry_run,
+                    manifest=manifest,
                 )
 
             # Step 4 — tests + diff.
@@ -506,9 +674,12 @@ class Orchestrator:
             # ended on the early-stop path. That's a feature, not stoppage.
             if review_json is None and test_result and test_result.passed:
                 self._emit("Tests passed and review wasn't required — early stop (saved an AI call).")
-                budget.mark_stopped_early(True)
+                budget.mark_stopped_early(
+                    True, reason="tests passed and review not required"
+                )
 
         logger.save_budget(budget.snapshot().to_dict())
+        self._finalize_manifest(logger, manifest, budget)
 
         final = self._write_summary(
             logger=logger, task=task, classification=classification, branch=branch,
@@ -520,7 +691,7 @@ class Orchestrator:
         )
 
         logger.fill_missing_placeholders(
-            reason=("dry-run preview — no agent calls made" if dry_run else "step skipped — see final_summary.md")
+            reason=("dry-run preview - no agent calls made" if dry_run else "step skipped - see final_summary.md")
         )
 
         return RunResult(
@@ -556,7 +727,10 @@ class Orchestrator:
         if not diff_text.strip():
             self._emit("No diff to review.")
         logger.save_diff(diff_text)
-        logger.save_task({"task": task or "", "mode": "review", "dry_run": dry_run})
+        manifest = self._build_manifest(
+            logger=logger, mode="review", task=(task or ""),
+            dry_run=dry_run, classification=None,
+        )
 
         # No file context in review-only mode, so policy evaluation is over an
         # empty set. We still emit a (mostly empty) report for consistency.
@@ -573,6 +747,17 @@ class Orchestrator:
             test_result="(tests not run in review-only mode)",
         )
         logger.save_prompts({"reviewer": prompt})
+
+        budget.set_dry_run(dry_run)
+        budget.record_planned(ai_calls=1, chars=len(prompt))
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        if not dry_run:
+            try:
+                budget.enforce_planned_within_caps()
+            except BudgetExceeded as exc:
+                budget.mark_stopped_early(True, reason=str(exc))
+                self._emit(f"Aborting review: {exc}")
 
         review_json: dict | None = None
         aborted = None
@@ -597,8 +782,11 @@ class Orchestrator:
         if review_json:
             logger.save_review(review_json)
         if aborted:
-            budget.mark_stopped_early(True)
+            budget.mark_stopped_early(True, reason=aborted)
+        elif dry_run:
+            budget.mark_stopped_early(True, reason="dry-run - no agent calls made")
         logger.save_budget(budget.snapshot().to_dict())
+        self._finalize_manifest(logger, manifest, budget)
 
         stats = diff_tools.parse_diff_stats(diff_text).to_dict()
         final = self._write_summary(
@@ -847,9 +1035,12 @@ class Orchestrator:
         policy_report: PolicyReport | None = None,
         risk_report: RiskReport | None = None,
         dry_run: bool = False,
+        manifest: RunManifest | None = None,
     ) -> RunResult:
-        budget.mark_stopped_early(True)
+        budget.mark_stopped_early(True, reason=aborted)
         logger.save_budget(budget.snapshot().to_dict())
+        if manifest is not None:
+            self._finalize_manifest(logger, manifest, budget)
         stats = diff_tools.parse_diff_stats(diff_text).to_dict() if diff_text else {
             "files_changed": 0, "additions": 0, "deletions": 0, "file_list": [],
         }

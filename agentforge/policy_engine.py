@@ -79,19 +79,18 @@ class PolicyReport:
     def human_summary(self) -> list[str]:
         lines: list[str] = ["Policy checks:"]
         if self.blocked_files:
-            lines.append(
-                f"- Blocked {len(self.blocked_paths)} sensitive file(s): "
-                + ", ".join(self.blocked_paths)
-            )
+            lines.append("- Blocked files: " + ", ".join(self.blocked_paths))
         else:
-            lines.append("- Blocked sensitive files: none")
+            lines.append("- Blocked files: none")
         lines.append(f"- Review required: {'yes' if self.require_review else 'no'}")
         lines.append(f"- Tests required: {'yes' if self.require_tests else 'no'}")
         lines.append(
             f"- Human approval required: {'yes' if self.require_human_approval else 'no'}"
         )
         if self.triggering_policies:
-            lines.append("- Triggering policies: " + ", ".join(self.triggering_policies))
+            lines.append("- Reasons:")
+            for policy_name in self.triggering_policies:
+                lines.append(f"  - {policy_name}")
         return lines
 
 

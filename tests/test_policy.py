@@ -1,4 +1,4 @@
-from agentforge.policy import Policy, PolicyEngine
+from agentforge.policy_engine import Policy, PolicyEngine
 
 
 def test_blocks_listed_files(base_config):
@@ -39,8 +39,14 @@ def test_human_summary_text(base_config):
     engine = PolicyEngine.from_config_list(base_config.policies)
     report = engine.evaluate(["src/auth.py", ".env"])
     summary = "\n".join(report.human_summary())
+    # Spec format: "Blocked files: ...", "Reasons:" header, nested policy names.
+    assert "Policy checks:" in summary
+    assert "Blocked files: .env" in summary
     assert "Review required: yes" in summary
-    assert "Blocked" in summary
+    assert "Tests required: yes" in summary
+    assert "Reasons:" in summary
+    assert "Auth changes require review" in summary
+    assert "Never send secrets" in summary
 
 
 def test_glob_patterns_match_at_depth():

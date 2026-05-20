@@ -64,6 +64,67 @@ Seven of the eleven steps use zero AI. Defaults cap each run at 5 AI calls and 8
 | Dry-run mode | Preview the exact prompts and routing decisions for free. |
 | Risk-aware routing | LOW-risk changes get a lighter pipeline. |
 
+## Budget control
+
+Every run shows its budget twice. Once up front, as an **estimate** built from the routing + the prompts the orchestrator has prepared:
+
+```
+Budget estimate:
+- Planned AI calls: 3/5
+- Files selected: 5/8
+- Estimated chars sent: 34,200
+- Review loops allowed: 1
+- Dry run: no
+```
+
+And once at the end, as a **summary** of the actuals:
+
+```
+Budget summary:
+- AI calls used: 2/5
+- Review loops used: 1/1
+- Files sent: 5/8
+- Estimated chars sent: 34,200
+- Stopped early: no
+```
+
+The summary appends `Stop reason: ...` whenever a run stops short — for example because tests passed and review wasn't required (early stop), the agent CLI wasn't installed (abort), or the caller declined the human-approval prompt.
+
+`BudgetManager` enforces these caps in `config.yaml`:
+
+```yaml
+max_ai_calls_per_run: 5
+max_review_loops: 1
+max_files_sent: 8
+max_chars_per_file: 12000
+max_total_chars: 80000
+```
+
+If the up-front estimate would exceed `max_ai_calls_per_run` or `max_total_chars`, the run aborts before any agent is contacted, with the exact message that exceeded the cap. If the estimate fits but an in-flight call would push us over, `BudgetExceeded` is raised at that point and `_finalize_aborted` writes a complete artifact set so the partial work is still inspectable.
+
+Approximation note: cost is character-based, not token-accurate. Good enough to keep spend bounded; not accurate to the cent.
+
+Every run also writes the full structure to `.agentforge/runs/<timestamp>/budget.json`:
+
+```json
+{
+  "ai_calls": 2,
+  "review_loops": 1,
+  "chars_sent": 34200,
+  "files_sent": 5,
+  "max_ai_calls": 5,
+  "max_review_loops": 1,
+  "max_total_chars": 80000,
+  "max_files_sent": 8,
+  "max_chars_per_file": 12000,
+  "planned_ai_calls": 3,
+  "planned_chars_sent": 35000,
+  "dry_run": false,
+  "stopped_early": false,
+  "stop_reason": null
+}
+```
+
 ## Risk scoring
 
 Before any agent runs, AgentForge scores the task on a 0–100 scale and maps it to LOW (0–39), MEDIUM (40–69), or HIGH (70–100). The score combines task keywords with selected file paths.
@@ -94,19 +155,12 @@ HIGH    python -m agentforge plan "Add password reset to login flow"
 
 The full breakdown is written to `risk_report.json` for every run.
 
-## Policy and safety
+## Policy rules
 
 Declarative governance lives in `config.yaml`:
 
 ```yaml
 policies:
-  - name: "Auth changes require review"
-    match:
-      - "auth/**"
-      - "**/login*"
-    require_review: true
-    require_tests: true
-
   - name: "Never send secrets to AI"
     block:
       - ".env"
@@ -114,16 +168,40 @@ policies:
       - "credentials.json"
       - "**/secrets*"
 
+  - name: "Auth changes require review"
+    match:
+      - "auth/**"
+      - "**/login*"
+      - "**/security*"
+    require_review: true
+    require_tests: true
+
   - name: "Database changes require human approval"
     match:
       - "migrations/**"
       - "**/schema.sql"
+      - "**/models.py"
     require_human_approval: true
 ```
 
-`block:` patterns are dropped from the context before any prompt is built. `match:` patterns escalate the run (force review, force tests, prompt for human approval). Decisions are saved to `policy_report.json`.
+The `PolicyEngine` (in `agentforge/policy_engine.py`) evaluates these rules against the set of files the run is about to send to an agent. `block:` patterns are dropped from the context before any prompt is built. `match:` patterns escalate the run: force review, force tests, prompt for human approval. Decisions are saved to `policy_report.json`.
 
-Safety guarantees:
+Sample terminal output:
+
+```
+Policy checks:
+- Blocked files: .env
+- Review required: yes
+- Tests required: yes
+- Human approval required: yes
+- Reasons:
+  - Auth changes require review
+  - Never send secrets to AI
+```
+
+Pattern matching supports glob syntax (`**/x` for any depth, `dir/**` for everything under a dir, plain `fnmatch` otherwise). Empty pattern lists are skipped without error.
+
+## Safety
 
 - Only non-destructive git is used: `checkout -b` into a fresh branch.
 - Uncommitted changes block branch creation.
@@ -134,26 +212,62 @@ Safety guarantees:
 
 ## Run artifacts
 
-Every run produces a stable artifact set under `.agentforge/runs/<timestamp>/`:
+Every run leaves a complete audit trail under `.agentforge/runs/<timestamp>/`:
 
 ```
-task.json            input task + classifier verdict
-repo_summary.json    file inventory at scan time
-selected_files.json  files chosen for the context window
-plan.md              planner output (markdown)
-prompts.json         exact prompts sent to each agent
-policy_report.json   blocked files + escalations
-risk_report.json     LOW/MEDIUM/HIGH + score + reasons + recommended workflow
-test_result.txt      test stdout/stderr + exit code
-diff.patch           implementer's changes
-review.json          reviewer verdict (structured JSON)
-budget.json          AI calls + chars used vs caps
-final_summary.md     human-readable wrap-up
+.agentforge/runs/20260520-141207/
+├── task.json            input task + run manifest (start/end, command, workflow)
+├── repo_summary.json    file inventory at scan time
+├── selected_files.json  files chosen for the context window
+├── risk_report.json     LOW/MEDIUM/HIGH + score + reasons + recommended workflow
+├── policy_report.json   blocked files + escalations
+├── budget.json          planned vs actual AI calls + chars
+├── prompts.json         exact prompts sent to each agent
+├── plan.md              planner output (markdown)
+├── test_result.txt      test stdout/stderr + exit code
+├── diff.patch           implementer's changes
+├── review.json          reviewer verdict (structured JSON)
+└── final_summary.md     human-readable wrap-up
 ```
 
-Artifacts that didn't get produced (dry-run, early stop, aborted run) are filled with placeholders explaining what happened, so CI and downstream tooling can rely on every file existing.
+The 12 files are always present. When a step is skipped (dry-run, early stop, abort) the corresponding artifact is filled with a placeholder explaining what happened, so CI and downstream tooling can rely on every file existing.
 
-See [examples/sample-run/](examples/sample-run/) for a realistic example.
+`task.json` is the top-level **run manifest**:
+
+```json
+{
+  "run_id": "20260520-141207",
+  "mode": "solve",
+  "task": "Add Stripe webhook signature verification",
+  "dry_run": false,
+  "started_at": "2026-05-20T14:12:07",
+  "ended_at":   "2026-05-20T14:12:34",
+  "command": "python -m agentforge solve \"Add Stripe webhook signature verification\"",
+  "agentforge_version": "0.1.0",
+  "agent_workflow": {
+    "planner":     "claude",
+    "implementer": "codex",
+    "reviewer":    "claude"
+  },
+  "classification": {
+    "task_type": "security",
+    "confidence": 0.8,
+    "keywords_matched": ["security", "auth "],
+    "routing": {"planner": "claude", "implementer": "codex", "reviewer": "claude", "require_review": true}
+  },
+  "stopped_early": false,
+  "stop_reason": null
+}
+```
+
+After every run the CLI prints the path so it's one click away:
+
+```
+Run artifacts saved to:
+  .agentforge/runs/20260520-141207/
+```
+
+See [examples/sample-run/](examples/sample-run/) for a realistic example directory.
 
 ## Example commands
 
@@ -274,7 +388,7 @@ agentforge/
   task_classifier.py     heuristic classifier
   context_builder.py     minimal-context picker
   budget.py              hard budget caps + reporting
-  policy.py              declarative governance rules
+  policy_engine.py       declarative governance rules
   risk_engine.py         LOW / MEDIUM / HIGH scoring
   logger.py              per-run artifact writer
   agents/                CLI adapters (Claude / Codex / local)
