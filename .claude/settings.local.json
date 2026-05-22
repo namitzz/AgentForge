@@ -7,7 +7,9 @@
       "Bash(python -c \"import json,pathlib; d=sorted\\(pathlib.Path\\('.agentforge/runs'\\).iterdir\\(\\)\\)[-1]; print\\(json.dumps\\(json.loads\\(\\(d/'budget.json'\\).read_text\\(\\)\\), indent=2\\)\\)\")",
       "Bash(python -c ' *)",
       "Bash(python -m pytest tests/test_review_pr.py -q)",
-      "Bash(python -m agentforge review-pr --dry-run)"
+      "Bash(python -m agentforge review-pr --dry-run)",
+      "Bash(python -m agentforge plan \"Add password reset to login\" --dry-run)",
+      "Bash(python -c \"import tomllib, pathlib; data=tomllib.loads\\(pathlib.Path\\('pyproject.toml'\\).read_text\\(\\)\\); print\\('project name:', data['project']['name']\\); print\\('entry point:', data['project']['scripts']\\)\")"
     ]
   }
 }

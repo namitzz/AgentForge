@@ -1,5 +1,9 @@
 # AgentForge
 
+[![CI](https://github.com/your-org/agentforge/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/agentforge/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 > Cost-aware governance for Claude, Codex, and future coding agents.
 
 **AgentForge is not another coding agent. It is a cost-aware control plane for coding agents.**
@@ -154,6 +158,37 @@ HIGH    python -m agentforge plan "Add password reset to login flow"
 ```
 
 The full breakdown is written to `risk_report.json` for every run.
+
+## Project rules
+
+`agentforge init` writes a starter file at `.agentforge/project_rules.md`. Anything you put there gets pasted verbatim into the planner, implementer, and reviewer prompts on every run — a small memory file so you don't have to repeat project conventions on the command line.
+
+Default contents:
+
+```markdown
+# Project Rules
+
+- Keep changes small and focused.
+- Prefer existing project style.
+- Do not modify authentication, security, database, or deployment files without review.
+- Do not send secrets or environment files to AI agents.
+- Explain risky changes clearly.
+- Do not auto-merge or force-push changes.
+```
+
+Edit it to taste — code style, naming conventions, hard "don't touch" zones, framework-specific guidance, links to internal docs. The file is plain Markdown and free-form. If it's missing, the run continues safely and the CLI notes:
+
+```
+Project rules: none found (continuing safely; create .agentforge/project_rules.md to add project-specific guidance)
+```
+
+When it's present:
+
+```
+Project rules: loaded from .agentforge/project_rules.md (304 chars)
+```
+
+The rules show up in `prompts.json` as part of each agent's prompt, so the audit trail makes it clear what guidance was active for a given run. No database, no external service — just one Markdown file in your repo.
 
 ## Policy rules
 
@@ -439,6 +474,7 @@ agentforge/
   context_builder.py     minimal-context picker
   budget.py              hard budget caps + reporting
   policy_engine.py       declarative governance rules
+  project_rules.py       loads .agentforge/project_rules.md
   risk_engine.py         LOW / MEDIUM / HIGH scoring
   logger.py              per-run artifact writer
   agents/                CLI adapters (Claude / Codex / local)
