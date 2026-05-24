@@ -10,6 +10,10 @@ max_total_chars: 80000
 claude_command: "claude --print"
 codex_command: "codex exec"
 
+# Per-command (agent or test) timeout in seconds. Lower it for tight CI
+# environments; raise it for big refactors or slow test suites.
+command_timeout_seconds: 600
+
 agents:
   planner: claude
   implementer: codex
@@ -62,7 +66,15 @@ secret_files:
 
 branch_prefix: "agentforge/"
 
-# Declarative governance rules. PolicyEngine enforces these at every run.
+# Anonymous telemetry. Off by default. Run `agentforge telemetry status`
+# to inspect, or `agentforge telemetry enable` to opt in. Source code,
+# prompts, diffs, file paths, repo names, and secrets are NEVER sent.
+telemetry:
+  enabled: false
+  anonymous_id: null
+  endpoint: null
+
+# Declarative governance rules. Optional but recommended.
 policies:
   - name: "Auth changes require review"
     match:

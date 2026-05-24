@@ -48,4 +48,8 @@ class LocalAgent(Agent):
         return git_tools.diff(staged=False, path=self.cwd)
 
     def run_tests(self) -> TestResult:
-        return run_tests(self.config.default_test_command, cwd=self.cwd)
+        return run_tests(
+            self.config.default_test_command,
+            cwd=self.cwd,
+            timeout=self.config.command_timeout_seconds,
+        )

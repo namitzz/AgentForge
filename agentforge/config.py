@@ -33,6 +33,10 @@ class Config:
     claude_command: str = "claude --print"
     codex_command: str = "codex exec"
 
+    # Per-command (agent or test) timeout. If the subprocess does not finish
+    # in this many seconds AgentForge stops it and writes a failure report.
+    command_timeout_seconds: int = 600
+
     agents: AgentRoutes = field(default_factory=AgentRoutes)
 
     ignore_dirs: list[str] = field(default_factory=lambda: [
@@ -75,6 +79,7 @@ class Config:
             max_total_chars=int(data.get("max_total_chars", 80_000)),
             claude_command=data.get("claude_command", "claude --print"),
             codex_command=data.get("codex_command", "codex exec"),
+            command_timeout_seconds=int(data.get("command_timeout_seconds", 600)),
             agents=agents,
             ignore_dirs=list(data.get("ignore_dirs", cls.__dataclass_fields__["ignore_dirs"].default_factory())),
             text_extensions=list(data.get("text_extensions", cls.__dataclass_fields__["text_extensions"].default_factory())),
@@ -111,6 +116,10 @@ max_total_chars: 80000
 
 claude_command: "claude --print"
 codex_command: "codex exec"
+
+# Per-command (agent or test) timeout in seconds. Lower it for tight CI
+# environments; raise it for big refactors or slow test suites.
+command_timeout_seconds: 600
 
 agents:
   planner: claude
@@ -154,9 +163,23 @@ risky_files:
 secret_files:
   - .env
   - .env.local
+  - .env.production
   - credentials.json
+  - service-account.json
+  - secrets.yaml
+  - secrets.yml
+  - id_rsa
+  - id_ed25519
 
 branch_prefix: "agentforge/"
+
+# Anonymous telemetry. Off by default. Run `agentforge telemetry status`
+# to inspect, or `agentforge telemetry enable` to opt in. Source code,
+# prompts, diffs, file paths, repo names, and secrets are NEVER sent.
+telemetry:
+  enabled: false
+  anonymous_id: null
+  endpoint: null
 
 # Declarative governance rules. Optional but recommended.
 policies:

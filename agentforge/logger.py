@@ -25,6 +25,7 @@ ARTIFACT_NAMES: tuple[str, ...] = (
     "prompts.json",
     "policy_report.json",
     "risk_report.json",
+    "security_report.json",
     "test_result.txt",
     "diff.patch",
     "review.json",
@@ -75,6 +76,24 @@ class RunLogger:
 
     def save_risk_report(self, report: dict) -> Path:
         return self.write_json("risk_report.json", report)
+
+    def save_security_report(self, report: dict) -> Path:
+        return self.write_json("security_report.json", report)
+
+    def save_failure_report(self, report: dict) -> Path:
+        """Written only when a run fails or stops early on an error path.
+
+        Intentionally NOT in ARTIFACT_NAMES — the *presence* of this file
+        is the signal that something went wrong. Downstream tooling
+        (`agentforge status`, CI) can check `path.exists()` to detect failure.
+        """
+        return self.write_json("failure_report.json", report)
+
+    def list_existing_artifacts(self) -> list[str]:
+        """Names of artifact files already written to this run's directory."""
+        if not self.dir.exists():
+            return []
+        return sorted(p.name for p in self.dir.iterdir() if p.is_file())
 
     def save_test_result(self, result_text: str) -> Path:
         return self.write_text("test_result.txt", result_text)

@@ -161,7 +161,8 @@ def test_review_pr_does_not_call_agent_in_dry_run(pr_repo, base_config, monkeypa
     assert result.budget["ai_calls"] == 0
 
 
-def test_review_pr_raises_when_no_base_branch(tmp_path, base_config, monkeypatch):
+def test_review_pr_fails_safely_when_no_base_branch(tmp_path, base_config, monkeypatch):
+    """No main/master should produce a structured failure, not a crash."""
     _git(["init", "-b", "develop"], tmp_path)
     _git(["config", "commit.gpgsign", "false"], tmp_path)
     (tmp_path / "x.txt").write_text("x", encoding="utf-8")
@@ -170,8 +171,11 @@ def test_review_pr_raises_when_no_base_branch(tmp_path, base_config, monkeypatch
 
     monkeypatch.chdir(tmp_path)
     orch = Orchestrator(config=base_config, cwd=tmp_path)
-    with pytest.raises(RuntimeError, match="could not find a base branch"):
-        orch.review_pr(dry_run=True)
+    result = orch.review_pr(dry_run=True)
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert "base branch" in result.failure["message"].lower()
+    assert (Path(result.run_dir) / "failure_report.json").exists()
 
 
 def test_review_pr_respects_explicit_base(pr_repo, base_config, monkeypatch):

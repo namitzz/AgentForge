@@ -1,0 +1,20 @@
+{
+  "blocked_files": [],
+  "suspicious_files": ["src/auth/login.py"],
+  "prompt_injection_warnings": [],
+  "secret_marker_warnings": [
+    {"file": "src/auth/login.py", "marker": "PASSWORD"}
+  ],
+  "command_risk": "low",
+  "command_blocked": false,
+  "command_safety": {
+    "command": "pytest",
+    "risk": "low",
+    "reasons": []
+  },
+  "files_scanned": 5,
+  "reasons": [
+    "Found 1 env-style secret marker(s) (PASSWORD) — kept but flagged for review"
+  ],
+  "safe_to_continue": true
+}

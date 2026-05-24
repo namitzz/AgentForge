@@ -38,13 +38,47 @@ Open `config.yaml` and look at:
 ## Commands
 
 - `init` — write `config.yaml` and the runs dir
+- `doctor` — health check: Python, git, config, CLIs, security defaults, telemetry
 - `plan "task"` — produce a plan, don't touch any files
 - `solve "task"` — plan, branch, edit, test, review
-- `review` — review your current `git diff` (optionally `--task "..."` for context)
+- `review` — review your current working-tree `git diff` (optionally `--task "..."` for context)
+- `review-pr` — review your current branch vs main/master (PR-style, no GitHub)
 - `test` — run the configured test command
 - `status` — show the last run
+- `telemetry` — `status` / `enable` / `disable` / `preview` / `clear` (off by default)
 
 `solve` prompts before it does anything. Pass `--yes` (or `-y`) to skip the prompt in scripts. Every command takes `-c path/to/config.yaml` if you keep the config somewhere non-default.
+
+## Dry run
+
+Every workflow command (`plan`, `solve`, `review`, `review-pr`) accepts `--dry-run`. In that mode AgentForge:
+
+- scans the repo, classifies the task, picks files
+- runs the local policy + risk + security engines
+- builds the exact prompts that would be sent
+- prints the planned workflow, file list, budget estimate
+- writes the full artifact set under `.agentforge/runs/<timestamp>/`
+
+It does **not** call Claude or Codex, modify any files, or create a branch. Use it before any real run on a new repo and as a smoke test in CI.
+
+## Reviewing artifacts
+
+After any run, the most useful files under `.agentforge/runs/<latest>/`:
+
+- `final_summary.md` — human-readable wrap-up. Same content as `agentforge status`.
+- `risk_report.json` — `risk_level`, `score`, reasons, recommended workflow.
+- `policy_report.json` — which policies fired, which files were blocked.
+- `security_report.json` — blocked files, suspicious files, prompt-injection warnings, command verdict.
+- `budget.json` — planned vs actual AI calls + chars, `stopped_early` + `stop_reason`.
+- `failure_report.json` — present **only** when something went wrong; check first when a run fails.
+- `selected_files.json` — the files the implementer actually got to see.
+- `prompts.json` — the exact prompts each agent received. Inspect if you suspect a leak or want to debug agent output.
+
+Open the run directory directly:
+
+```bash
+ls .agentforge/runs/$(ls -t .agentforge/runs | head -1)/
+```
 
 ## What `solve` actually does
 

@@ -50,10 +50,10 @@ dev = [
 agentforge = "agentforge.main:main"
 
 [project.urls]
-Homepage   = "https://github.com/your-org/agentforge"
-Repository = "https://github.com/your-org/agentforge"
-Issues     = "https://github.com/your-org/agentforge/issues"
-Changelog  = "https://github.com/your-org/agentforge/blob/main/CHANGELOG.md"
+Homepage   = "https://github.com/namitzz/AgentForge"
+Repository = "https://github.com/namitzz/AgentForge"
+Issues     = "https://github.com/namitzz/AgentForge/issues"
+Changelog  = "https://github.com/namitzz/AgentForge/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 include-package-data = true

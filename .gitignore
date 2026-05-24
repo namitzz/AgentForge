@@ -5,6 +5,8 @@ __pycache__/
 venv/
 .env
 .agentforge/runs/
+**/.agentforge/runs/
+**/.agentforge/telemetry/
 dist/
 build/
 *.egg-info/

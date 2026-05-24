@@ -20,13 +20,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -e ".[dev]"
 
       - name: Run pytest
         run: pytest -v
 
-      - name: Smoke-test the CLI
+      - name: Smoke-test the CLI (both invocations)
         run: |
           python -m agentforge --help
           python -m agentforge init --force
+          agentforge --help
+          agentforge doctor

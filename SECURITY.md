@@ -4,12 +4,27 @@ AgentForge sends source code to external AI agents. That is the whole point of t
 
 ## What AgentForge does to keep things safe
 
-- **Secret files are filtered at scan time.** Anything listed under `secret_files:` in `config.yaml` (default: `.env`, `.env.local`, `credentials.json`) is dropped before any prompt is built. The agent never sees those files.
-- **Policy `block:` patterns add to that list.** The default policies block `*.pem`, `**/secrets*`, and similar. Add your own for project-specific sensitive paths.
+Three layers of defence run on every command, before any agent is called:
+
+**Layer 1 — Name-based filtering.**
+
+- **Secret files dropped by name.** Anything listed under `secret_files:` in `config.yaml` (default: `.env`, `.env.local`, `credentials.json`) is excluded at scan time.
+- **Policy `block:` patterns drop more.** Default policies block `*.pem`, `**/secrets*`, etc. Add your own for project-specific sensitive paths.
 - **Binaries are skipped.** Files with NUL bytes in the first 1KB are not read or sent.
+
+**Layer 2 — Content scanning (`agentforge/security.py`).**
+
+- **Secret content scan.** Even if a file's *name* looks innocent, its *contents* are scanned for high-precision credential patterns: AWS access/session keys, GitHub tokens, OpenAI / Anthropic API keys, JWT tokens, PEM private keys, SSH private keys, Slack tokens, Google API keys. Any file that matches is dropped from the context. The matched secret value is **never** written to logs or artifacts — only the pattern name (e.g. `aws_access_key`) and the file path are recorded.
+- **Prompt-injection scan.** Selected file contents are scanned for known injection phrases (e.g. `ignore previous instructions`, `exfiltrate`, `disable safety`, `reveal your system prompt`). Warnings are surfaced in the terminal and saved to `security_report.json`. The file is **not** auto-dropped — false positives in docs and tests are common, and the agent prompts already include explicit guidance to ignore embedded instructions.
+- **Env-marker scan.** Lower-confidence patterns like `API_KEY=...`, `PASSWORD=...`, `TOKEN=...`, `OPENAI_API_KEY=...`, `ANTHROPIC_API_KEY=...`. Obvious placeholders (`YOUR_KEY_HERE`, `changeme`, `replace_me*`, etc.) are ignored. Real-looking values do **not** drop the file but do add it to `suspicious_files`. Operators inspect.
+- **Test-command safety check.** `default_test_command` is pattern-checked before exec. Refused patterns include `rm -rf /`, `mkfs`, raw-device writes (`dd of=/dev/...`), fork bombs, `curl | sh`, Windows `format C:` / `del /s` / `rmdir /s`, `shutdown`, and dangerous git commands: `git push --force` (or `-f`), `git reset --hard`, `git clean -fd`. A refused command is recorded as a failed test (exit 126) so the run aborts cleanly.
+
+**Layer 3 — Pipeline guarantees.**
+
 - **The reviewer only sees the diff.** Full source files are never sent to the reviewer agent.
-- **No API keys live in this repo.** Agent CLIs handle their own authentication. AgentForge shells out and reads stdout.
+- **No API keys live in this repo.** Agent CLIs handle their own authentication.
 - **No destructive git.** Only `git checkout -b` into fresh branches. AgentForge never resets, force-pushes, deletes branches, or auto-merges.
+- **Budget enforced before each call.** Cannot silently overrun.
 
 ## What you should still do
 
@@ -25,7 +40,9 @@ AgentForge sends source code to external AI agents. That is the whole point of t
 
 6. **Inspect `prompts.json`.** It contains the exact text that would have been sent to each agent. If you suspect something sensitive leaked, this is where you'd see it. Redact before sharing run artifacts in issues.
 
-7. **Keep your agent CLIs up to date.** Auth tokens and rate-limit behavior are handled by `claude` and `codex`, not by AgentForge.
+7. **Inspect `security_report.json`.** It tells you, for every run: how many files had detected secrets and were dropped, which prompt-injection phrases were spotted (and in which files), and whether the test command passed the safety check. The actual secret values are never recorded — only the pattern name.
+
+8. **Keep your agent CLIs up to date.** Auth tokens and rate-limit behavior are handled by `claude` and `codex`, not by AgentForge.
 
 ## Reporting a vulnerability
 

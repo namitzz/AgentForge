@@ -38,8 +38,15 @@ from .context_builder import BuiltContext, build_context, summarize_repo
 from .logger import RunLogger
 from .policy_engine import PolicyEngine, PolicyReport
 from .project_rules import load_project_rules
+from .failure import (
+    ErrorCategory,
+    FailureReport,
+    RunStatus,
+    build_failure_report,
+)
 from .risk_engine import RiskEngine, RiskLevel, RiskReport
 from .run_artifacts import RunManifest
+from . import security as _security
 from .prompts.implementation_prompt import build_implementation_prompt
 from .prompts.planning_prompt import build_planning_prompt
 from .prompts.review_prompt import build_pr_review_prompt, build_review_prompt
@@ -69,6 +76,8 @@ class RunResult:
     risk_report: dict | None = None
     dry_run: bool = False
     aborted_reason: str | None = None
+    status: str = RunStatus.COMPLETED.value
+    failure: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -86,6 +95,8 @@ class RunResult:
             "dry_run": self.dry_run,
             "budget": self.budget,
             "aborted_reason": self.aborted_reason,
+            "status": self.status,
+            "failure": self.failure,
         }
 
 
@@ -98,10 +109,11 @@ class Orchestrator:
 
     # --- agent factory -------------------------------------------------
     def _agent(self, kind: str) -> Agent:
+        timeout = self.config.command_timeout_seconds
         if kind == "claude":
-            return ClaudeAgent(command=self.config.claude_command, cwd=self.cwd)
+            return ClaudeAgent(command=self.config.claude_command, cwd=self.cwd, timeout=timeout)
         if kind == "codex":
-            return CodexAgent(command=self.config.codex_command, cwd=self.cwd)
+            return CodexAgent(command=self.config.codex_command, cwd=self.cwd, timeout=timeout)
         if kind == "local":
             return LocalAgent(config=self.config, cwd=self.cwd)
         raise ValueError(f"unknown agent kind: {kind}")
@@ -112,6 +124,48 @@ class Orchestrator:
 
     def _policy_engine(self) -> PolicyEngine:
         return PolicyEngine.from_config_list(self.config.policies)
+
+    def _run_security_scan(
+        self,
+        context: BuiltContext,
+        logger: RunLogger,
+        include_command_check: bool = True,
+    ) -> tuple[BuiltContext, _security.SecurityReport]:
+        """Scan selected file contents for secrets + prompt-injection phrases,
+        then check the configured test command. Save the report and drop
+        secret-bearing files from the context."""
+        report = _security.scan_files(context.selected_files)
+        if include_command_check:
+            report.command_safety = _security.is_dangerous_command(
+                self.config.default_test_command
+            )
+
+        # Drop files where we matched a known secret pattern.
+        blocked = _security.files_with_secrets(report)
+        if blocked:
+            kept = [(p, c) for p, c in context.selected_files if p not in blocked]
+            total = sum(len(c) for _, c in kept)
+            context = BuiltContext(
+                repo_summary_text=context.repo_summary_text,
+                selected_files=kept,
+                selected_paths=[p for p, _ in kept],
+                total_chars=total,
+                truncated=context.truncated,
+            )
+
+        logger.save_security_report(report.to_dict())
+        for line in report.human_summary():
+            self._emit(line)
+        return context, report
+
+    def _emit_files_to_send(self, selected_paths: list[str]) -> None:
+        """Dry-run aid: list the file paths that would be sent to an agent."""
+        if not selected_paths:
+            self._emit("Files that would be sent: (none — empty context)")
+            return
+        self._emit("Files that would be sent:")
+        for path in selected_paths:
+            self._emit(f"  - {path}")
 
     def _load_project_rules(self) -> str | None:
         """Load .agentforge/project_rules.md and emit a status line."""
@@ -192,6 +246,16 @@ class Orchestrator:
             self.config.agents.reviewer,
         )
         return classify(task, defaults)
+
+    @staticmethod
+    def _validate_response(resp: AgentResponse, role: str) -> tuple[str, str | None]:
+        """Return (output, error). Empty output from a 0-exit agent counts
+        as an error so we don't continue with a blank plan/diff."""
+        if not resp.ok:
+            return "", resp.error or f"{role} exit {resp.exit_code}"
+        if not resp.output.strip():
+            return "", f"{role} returned an empty response (exit 0)"
+        return resp.output, None
 
     def _call_agent(
         self,
@@ -344,6 +408,15 @@ class Orchestrator:
     # --- plan-only flow -----------------------------------------------
     def plan_only(self, task: str, dry_run: bool = False) -> RunResult:
         logger = RunLogger()
+        try:
+            result = self._plan_only_impl(logger, task, dry_run)
+        except KeyboardInterrupt as exc:
+            return self._handle_unexpected_failure(logger, exc, step_failed="planning", task=task, dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001 — top-level safety net
+            return self._handle_unexpected_failure(logger, exc, step_failed="planning", task=task, dry_run=dry_run)
+        return self._apply_status_and_failure(result, logger, step_failed="planning")
+
+    def _plan_only_impl(self, logger: RunLogger, task: str, dry_run: bool) -> RunResult:
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -362,9 +435,13 @@ class Orchestrator:
         context = build_context(local, summary, task, self.config)
         kept_paths, policy_report = self._apply_policies(context.selected_paths)
         context = self._drop_blocked_from_context(context, kept_paths)
+        context, security_report = self._run_security_scan(context, logger)
         budget.record_files_sent(len(context.selected_files))
         logger.save_selected_files([{"path": p, "chars": len(c)} for p, c in context.selected_files])
         logger.save_policy_report(policy_report.to_dict())
+
+        if dry_run:
+            self._emit_files_to_send(context.selected_paths)
 
         risk_report = self._assess_risk(task, context.selected_paths, logger)
 
@@ -412,10 +489,9 @@ class Orchestrator:
             try:
                 planner = self._agent(planner_kind)
                 resp = self._call_agent(budget, planner, planning_prompt, role="planner")
-                if resp.ok:
-                    plan = resp.output
-                else:
-                    aborted = resp.error or f"planner exit {resp.exit_code}"
+                plan, err = self._validate_response(resp, "planner")
+                if err:
+                    aborted = err
             except (BudgetExceeded, AgentUnavailable) as exc:
                 aborted = str(exc)
                 self._emit(f"Aborting plan: {exc}. Try `--dry-run` to preview without calling an agent.")
@@ -455,6 +531,15 @@ class Orchestrator:
     # --- full solve flow -----------------------------------------------
     def solve(self, task: str, dry_run: bool = False) -> RunResult:
         logger = RunLogger()
+        try:
+            result = self._solve_impl(logger, task, dry_run)
+        except KeyboardInterrupt as exc:
+            return self._handle_unexpected_failure(logger, exc, step_failed="solve", task=task, dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_unexpected_failure(logger, exc, step_failed="solve", task=task, dry_run=dry_run)
+        return self._apply_status_and_failure(result, logger, step_failed="solve")
+
+    def _solve_impl(self, logger: RunLogger, task: str, dry_run: bool) -> RunResult:
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -473,12 +558,15 @@ class Orchestrator:
         context = build_context(local, summary, task, self.config)
         kept_paths, policy_report = self._apply_policies(context.selected_paths)
         context = self._drop_blocked_from_context(context, kept_paths)
+        context, security_report = self._run_security_scan(context, logger)
         budget.record_files_sent(len(context.selected_files))
 
         self._emit(
             f"Context: {len(context.selected_files)} files, "
             f"{context.total_chars} chars (truncated={context.truncated})"
         )
+        if dry_run:
+            self._emit_files_to_send(context.selected_paths)
 
         logger.save_selected_files([{"path": p, "chars": len(c)} for p, c in context.selected_files])
         logger.save_policy_report(policy_report.to_dict())
@@ -645,8 +733,9 @@ class Orchestrator:
                 impl_resp = self._call_agent(
                     budget, implementer, prompts_blob["implementer"], role="implementer"
                 )
-                if not impl_resp.ok:
-                    aborted = impl_resp.error or f"implementer exit {impl_resp.exit_code}"
+                _impl_out, _impl_err = self._validate_response(impl_resp, "implementer")
+                if _impl_err:
+                    aborted = _impl_err
             except (BudgetExceeded, AgentUnavailable) as exc:
                 aborted = str(exc)
                 self._emit(f"Implementer unavailable: {exc}. Try `--dry-run` to preview without calling an agent.")
@@ -661,7 +750,25 @@ class Orchestrator:
                 )
 
             # Step 4 — tests + diff.
-            test_result = local.run_tests()
+            if security_report.command_safety and not security_report.command_safety.safe:
+                reasons = ", ".join(security_report.command_safety.reasons)
+                self._emit(
+                    f"REFUSED to run test command "
+                    f"({security_report.command_safety.command!r}) — "
+                    f"dangerous pattern detected: {reasons}"
+                )
+                test_result = TestResult(
+                    command=security_report.command_safety.command,
+                    exit_code=126,
+                    stdout="",
+                    stderr=(
+                        f"REFUSED by AgentForge security check. "
+                        f"Dangerous patterns: {reasons}. "
+                        f"Edit default_test_command in config.yaml."
+                    ),
+                )
+            else:
+                test_result = local.run_tests()
             logger.save_test_result(test_result.to_text())
 
             diff_text = local.git_diff()
@@ -738,6 +845,15 @@ class Orchestrator:
     # --- review-only flow ---------------------------------------------
     def review_diff_only(self, task: str | None = None, dry_run: bool = False) -> RunResult:
         logger = RunLogger()
+        try:
+            result = self._review_diff_only_impl(logger, task, dry_run)
+        except KeyboardInterrupt as exc:
+            return self._handle_unexpected_failure(logger, exc, step_failed="review", task=task or "", dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_unexpected_failure(logger, exc, step_failed="review", task=task or "", dry_run=dry_run)
+        return self._apply_status_and_failure(result, logger, step_failed="review")
+
+    def _review_diff_only_impl(self, logger: RunLogger, task: str | None, dry_run: bool) -> RunResult:
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -760,6 +876,17 @@ class Orchestrator:
         # empty set. We still emit a (mostly empty) report for consistency.
         policy_report = self._policy_engine().evaluate([])
         logger.save_policy_report(policy_report.to_dict())
+
+        # Security: scan the diff itself for injection phrases + run the
+        # command-safety check. (No file content scan here — reviewer only
+        # sees the diff.)
+        security_report = _security.scan_files([("diff.patch", diff_text)])
+        security_report.command_safety = _security.is_dangerous_command(
+            self.config.default_test_command
+        )
+        logger.save_security_report(security_report.to_dict())
+        for line in security_report.human_summary():
+            self._emit(line)
 
         # Risk scoring runs on the task description (paths are unknown here).
         risk_report = self._assess_risk(task or "", [], logger)
@@ -853,6 +980,21 @@ class Orchestrator:
         GitHub authentication. Pure local git diff + reviewer prompt.
         """
         logger = RunLogger()
+        try:
+            result = self._review_pr_impl(logger, task, dry_run, base)
+        except KeyboardInterrupt as exc:
+            return self._handle_unexpected_failure(logger, exc, step_failed="review-pr", task=task or "", dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_unexpected_failure(logger, exc, step_failed="review-pr", task=task or "", dry_run=dry_run)
+        return self._apply_status_and_failure(result, logger, step_failed="review-pr")
+
+    def _review_pr_impl(
+        self,
+        logger: RunLogger,
+        task: str | None,
+        dry_run: bool,
+        base: str | None,
+    ) -> RunResult:
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -891,6 +1033,18 @@ class Orchestrator:
         # context-builder selection, which doesn't apply to PR mode).
         kept_paths, policy_report = self._apply_policies(changed)
         logger.save_policy_report(policy_report.to_dict())
+
+        # Security scan: check each changed file's current content for
+        # secret patterns + injection phrases. Run the command-safety check
+        # for completeness. Save the report.
+        scan_pairs = [(p, local.read_file(p)) for p in changed]
+        security_report = _security.scan_files(scan_pairs)
+        security_report.command_safety = _security.is_dangerous_command(
+            self.config.default_test_command
+        )
+        logger.save_security_report(security_report.to_dict())
+        for line in security_report.human_summary():
+            self._emit(line)
 
         risk_report = self._assess_risk(task or "", changed, logger)
 
@@ -1194,6 +1348,106 @@ class Orchestrator:
         text = "\n".join(lines)
         logger.save_final_summary(text)
         return text
+
+    def _apply_status_and_failure(
+        self,
+        result: RunResult,
+        logger: RunLogger,
+        *,
+        exception: BaseException | None = None,
+        step_failed: str | None = None,
+        error_category: ErrorCategory | None = None,
+    ) -> RunResult:
+        """Finalise the result: pick the right RunStatus, and write
+        ``failure_report.json`` whenever the run did not complete cleanly."""
+        if exception is not None or result.aborted_reason:
+            status = RunStatus.FAILED
+            message = (
+                str(exception) if exception is not None
+                else (result.aborted_reason or "Run aborted")
+            )
+            try:
+                partial = logger.list_existing_artifacts()
+            except OSError:
+                partial = []
+            report = build_failure_report(
+                status=status,
+                exception=exception,
+                message=message,
+                step_failed=step_failed,
+                partial_artifacts=partial,
+                error_category=error_category,
+            )
+            try:
+                logger.save_failure_report(report.to_dict())
+            except OSError:
+                # Disk full / permission denied: don't crash on top of failure.
+                pass
+            result.failure = report.to_dict()
+        elif result.dry_run:
+            status = RunStatus.DRY_RUN_COMPLETED
+        elif result.budget.get("stopped_early"):
+            status = RunStatus.STOPPED_EARLY
+        else:
+            status = RunStatus.COMPLETED
+        result.status = status.value
+        return result
+
+    def _handle_unexpected_failure(
+        self,
+        logger: RunLogger,
+        exception: BaseException,
+        step_failed: str,
+        task: str,
+        dry_run: bool,
+    ) -> RunResult:
+        """Top-level catch for KeyboardInterrupt + uncaught exceptions.
+
+        We may not have a fully-populated RunResult here (the run blew up
+        mid-pipeline), so build a minimal one and write the failure report.
+        """
+        if isinstance(exception, KeyboardInterrupt):
+            message = "Run interrupted by user (Ctrl+C)"
+            category: ErrorCategory | None = ErrorCategory.UNKNOWN_ERROR
+        else:
+            message = f"Unexpected error during {step_failed}: {exception}"
+            category = None
+        try:
+            partial = logger.list_existing_artifacts()
+        except OSError:
+            partial = []
+        report = build_failure_report(
+            status=RunStatus.FAILED,
+            exception=exception,
+            message=message,
+            step_failed=step_failed,
+            partial_artifacts=partial,
+            error_category=category,
+        )
+        try:
+            logger.save_failure_report(report.to_dict())
+        except OSError:
+            pass
+        self._emit(f"Run failed: {message}")
+        return RunResult(
+            run_id=logger.run_id,
+            run_dir=logger.dir,
+            task=task,
+            classification={},
+            plan="",
+            branch=None,
+            diff_stats={"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []},
+            test_passed=None,
+            review=None,
+            policy_report=None,
+            risk_report=None,
+            dry_run=dry_run,
+            budget={},
+            final_summary="Run failed; see failure_report.json for details.",
+            aborted_reason=message,
+            status=RunStatus.FAILED.value,
+            failure=report.to_dict(),
+        )
 
     def _finalize_aborted(
         self,

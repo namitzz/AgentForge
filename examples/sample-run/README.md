@@ -17,6 +17,7 @@ This folder shows exactly what `.agentforge/runs/<timestamp>/` looks like after 
 | [selected_files.json](selected_files.json) | the 5 files actually sent to the implementer |
 | [risk_report.json](risk_report.json)   | LOW/MEDIUM/HIGH + score + reasons + recommended workflow |
 | [policy_report.json](policy_report.json) | blocked files + escalations from the policy engine |
+| [security_report.json](security_report.json) | secret content scan + injection warnings + command safety verdict |
 | [budget.json](budget.json)             | planned vs actual AI calls and characters |
 | [prompts.json](prompts.json)           | the exact prompts sent to each agent (planner, implementer, reviewer) |
 | [plan.md](plan.md)                     | the planner's output |
