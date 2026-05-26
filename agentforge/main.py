@@ -18,6 +18,7 @@ from .merge_readiness import MergeReadinessEngine, MERGE_READINESS_ARTIFACT_NAME
 from .orchestrator import Orchestrator, RunResult
 from .project_rules import PROJECT_RULES_REL_PATH, write_default_project_rules
 from . import telemetry
+from .scorecards import SCORECARDS_PATH, ScorecardStore, update_from_run_dir
 from .tools.test_runner import run_tests
 
 
@@ -81,6 +82,23 @@ def _emit_telemetry_for_run(
         telemetry.emit(event)
     except Exception:
         # Telemetry must never break the main command. Swallow everything.
+        pass
+
+
+def _update_scorecards_for_run(result: RunResult) -> None:
+    """Update local scorecards from a completed run. Never raises — a
+    scorecard write failure must not break the user's command."""
+    try:
+        store = ScorecardStore(SCORECARDS_PATH)
+        if store.was_corrupted:
+            console.print(
+                "[yellow]Warning:[/yellow] .agentforge/scorecards.json was "
+                "missing or unreadable; recreating it."
+            )
+        if update_from_run_dir(store, Path(result.run_dir)):
+            store.save()
+    except Exception:
+        # Scorecards are observability, never authority. Stay silent.
         pass
 
 
@@ -174,6 +192,7 @@ def plan(
     task: str = typer.Argument(..., help="The task in quotes. Be specific — keywords drive file selection and risk scoring."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config.yaml."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the plan prompt without calling any agent. No files modified."),
+    no_code_leak: bool = typer.Option(False, "--no-code-leak", help="Override config: do not send source code, diffs, or file contents to agents."),
 ) -> None:
     """Produce an implementation plan. Reads the repo, picks relevant files,
     runs the local risk + policy engines, asks the planner agent for a plan,
@@ -185,10 +204,15 @@ def plan(
     if dry_run:
         _dry_run_banner()
     started = time.monotonic()
-    result = orch.plan_only(task, dry_run=dry_run)
+    result = orch.plan_only(
+        task,
+        dry_run=dry_run,
+        no_code_leak=(True if no_code_leak else None),
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
     _print_result(result, show_plan=True)
     _emit_telemetry_for_run("plan", result, duration_ms)
+    _update_scorecards_for_run(result)
 
 
 @app.command()
@@ -197,6 +221,7 @@ def solve(
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config.yaml."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the 'Proceed?' confirmation. Required in CI / scripts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the full pipeline (no AI calls, no edits, no branch)."),
+    no_code_leak: bool = typer.Option(False, "--no-code-leak", help="Refuse to send code; solve will stop cleanly. Use --dry-run to preview."),
 ) -> None:
     """Full pipeline: scan -> classify -> policy + risk + security checks
     -> plan -> create branch -> implement -> tests -> diff-only review
@@ -223,10 +248,15 @@ def solve(
         if not typer.confirm("Proceed?", default=True):
             raise typer.Exit(code=1)
     started = time.monotonic()
-    result = orch.solve(task, dry_run=dry_run)
+    result = orch.solve(
+        task,
+        dry_run=dry_run,
+        no_code_leak=(True if no_code_leak else None),
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
     _print_result(result, show_plan=True)
     _emit_telemetry_for_run("solve", result, duration_ms)
+    _update_scorecards_for_run(result)
 
 
 @app.command()
@@ -234,6 +264,7 @@ def review(
     task: str = typer.Option("", "--task", help="Optional task description for reviewer context."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config.yaml."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the reviewer prompt without calling the agent."),
+    no_code_leak: bool = typer.Option(False, "--no-code-leak", help="Send diff stats only — never the diff body."),
 ) -> None:
     """Review your current working-tree git diff. The reviewer sees only
     the diff - full source files are never sent.
@@ -244,10 +275,15 @@ def review(
     if dry_run:
         _dry_run_banner()
     started = time.monotonic()
-    result = orch.review_diff_only(task or None, dry_run=dry_run)
+    result = orch.review_diff_only(
+        task or None,
+        dry_run=dry_run,
+        no_code_leak=(True if no_code_leak else None),
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
     _print_result(result, show_plan=False)
     _emit_telemetry_for_run("review", result, duration_ms)
+    _update_scorecards_for_run(result)
 
 
 @app.command("review-pr")
@@ -256,6 +292,7 @@ def review_pr(
     base: str = typer.Option("", "--base", help="Base branch to compare against. Auto-detects main, then master."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config.yaml."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the reviewer prompt without calling the agent."),
+    no_code_leak: bool = typer.Option(False, "--no-code-leak", help="Send diff stats only — never the diff body."),
 ) -> None:
     """PR-style review: compare the current branch against main (or master)
     and ask the reviewer to judge the merge-base diff.
@@ -266,10 +303,16 @@ def review_pr(
     if dry_run:
         _dry_run_banner()
     started = time.monotonic()
-    result = orch.review_pr(task=task or None, dry_run=dry_run, base=base or None)
+    result = orch.review_pr(
+        task=task or None,
+        dry_run=dry_run,
+        base=base or None,
+        no_code_leak=(True if no_code_leak else None),
+    )
     duration_ms = int((time.monotonic() - started) * 1000)
     _print_result(result, show_plan=False)
     _emit_telemetry_for_run("review-pr", result, duration_ms)
+    _update_scorecards_for_run(result)
 
 
 @app.command()
@@ -433,6 +476,75 @@ def doctor(
 
 
 @app.command()
+def redteam(
+    task: str = typer.Option("", "--task", help="Optional task description for reviewer context."),
+    base: str = typer.Option("", "--base", help="Compare current branch against this base (PR-style)."),
+    run: Path = typer.Option(None, "--run", help="Replay an existing run directory instead of using the current diff."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config.yaml."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the red-team prompt without calling the reviewer."),
+    no_code_leak: bool = typer.Option(False, "--no-code-leak", help="Send diff stats only — never the diff body."),
+) -> None:
+    """Strict, adversarial review for high-risk changes.
+
+    Three diff sources, picked in order:
+      - --run <path>: reuse a saved run's diff + reports
+      - --base <branch>: PR-style comparison
+      - default: current working-tree diff
+
+    Never pushes, never opens a PR, never needs GitHub auth.
+    """
+    orch = _load(config_path)
+    if dry_run:
+        _dry_run_banner()
+    started = time.monotonic()
+    result = orch.redteam(
+        task=task or None,
+        dry_run=dry_run,
+        base=base or None,
+        run=run,
+        no_code_leak=(True if no_code_leak else None),
+    )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _print_result(result, show_plan=False)
+    if result.review:
+        verdict = result.review
+        color = {
+            "approved":             "green",
+            "needs_changes":        "yellow",
+            "needs_manual_review":  "red",
+        }.get(str(verdict.get("status")), "white")
+        console.print(Panel.fit(
+            f"status: [{color}]{verdict.get('status')}[/{color}]\n"
+            f"risk_level: {verdict.get('risk_level')}\n"
+            f"merge_recommendation: {verdict.get('merge_recommendation')}\n"
+            f"summary: {verdict.get('summary')}",
+            title="Red team verdict",
+            border_style=color,
+        ))
+        findings = verdict.get("findings") or []
+        if findings:
+            console.print("[bold]Findings:[/bold]")
+            for f in findings:
+                sev = f.get("severity", "?")
+                sev_color = {"critical": "red", "high": "red", "medium": "yellow", "low": "white"}.get(sev, "white")
+                console.print(
+                    f"  - [{sev_color}][{sev}][/{sev_color}] "
+                    f"{f.get('file', '?')}: {f.get('issue', '')}"
+                )
+                if f.get("why_it_matters"):
+                    console.print(f"      why: {f.get('why_it_matters')}")
+                if f.get("suggested_fix"):
+                    console.print(f"      fix: {f.get('suggested_fix')}")
+        missing = verdict.get("missing_tests") or []
+        if missing:
+            console.print("[bold]Missing tests:[/bold]")
+            for t in missing:
+                console.print(f"  - {t}")
+    _emit_telemetry_for_run("review", result, duration_ms)
+    _update_scorecards_for_run(result)
+
+
+@app.command()
 def test(
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
 ) -> None:
@@ -547,6 +659,48 @@ def telemetry_clear() -> None:
     console.print("[green]OK[/green] local telemetry data cleared.")
 
 
+scorecards_app = typer.Typer(
+    add_completion=False,
+    help="Local per-agent scorecards (no network, no telemetry).",
+    invoke_without_command=True,
+)
+app.add_typer(scorecards_app, name="scorecards")
+
+
+@scorecards_app.callback(invoke_without_command=True)
+def scorecards_main(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(
+        False, "--json",
+        help="Emit machine-readable JSON instead of the text view.",
+    ),
+) -> None:
+    """Show local agent scorecards. Use 'scorecards reset' to wipe them."""
+    if ctx.invoked_subcommand is not None:
+        return
+    store = ScorecardStore(SCORECARDS_PATH)
+    if store.was_corrupted:
+        console.print(
+            "[yellow]Warning:[/yellow] .agentforge/scorecards.json was "
+            "unreadable; starting fresh."
+        )
+    if json_output:
+        console.print(json.dumps(store.to_dict(), indent=2))
+    else:
+        console.print(store.render_text())
+
+
+@scorecards_app.command("reset")
+def scorecards_reset() -> None:
+    """Delete .agentforge/scorecards.json and reset all per-agent stats."""
+    if not typer.confirm("Delete .agentforge/scorecards.json?", default=False):
+        console.print("[yellow]No changes made.[/yellow]")
+        raise typer.Exit(code=1)
+    store = ScorecardStore(SCORECARDS_PATH)
+    store.reset()
+    console.print("[green]OK[/green] scorecards cleared.")
+
+
 @app.command()
 def readiness(
     run: Path = typer.Option(None, "--run", help="Run directory to score. Defaults to the latest run."),
@@ -654,10 +808,13 @@ def status(
     if budget_path.exists():
         budget = json.loads(budget_path.read_text(encoding="utf-8"))
         if not budget.get("placeholder"):
+            # call_log is a list of per-call dicts; skip it in the summary
+            # table — too wide to render usefully alongside scalars.
+            scalar = {k: v for k, v in budget.items() if k != "call_log"}
             table = Table(title="Budget", show_header=True)
-            for k in budget.keys():
+            for k in scalar.keys():
                 table.add_column(k)
-            table.add_row(*[str(v) for v in budget.values()])
+            table.add_row(*[str(v) for v in scalar.values()])
             console.print(table)
 
     security_path = run_dir / "security_report.json"

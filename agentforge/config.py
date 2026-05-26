@@ -55,6 +55,11 @@ class Config:
 
     branch_prefix: str = "agentforge/"
 
+    # Privacy controls. When True (or when --no-code-leak is passed),
+    # AgentForge refuses to send source code, file contents, or diff
+    # bodies to external agents. Local checks still run.
+    privacy_no_code_leak: bool = False
+
     # Declarative governance rules. Raw dicts; PolicyEngine parses them.
     policies: list[dict[str, Any]] = field(default_factory=list)
 
@@ -86,6 +91,9 @@ class Config:
             risky_files=list(data.get("risky_files", cls.__dataclass_fields__["risky_files"].default_factory())),
             secret_files=list(data.get("secret_files", cls.__dataclass_fields__["secret_files"].default_factory())),
             branch_prefix=data.get("branch_prefix", "agentforge/"),
+            privacy_no_code_leak=bool(
+                (data.get("privacy") or {}).get("no_code_leak_mode", False)
+            ),
             policies=list(data.get("policies") or []),
             source_path=source,
         )
@@ -172,6 +180,14 @@ secret_files:
   - id_ed25519
 
 branch_prefix: "agentforge/"
+
+# Privacy controls. When enabled, AgentForge refuses to send source code,
+# file contents, or diff bodies to external agents. Local checks still
+# run (risk, policy, security, budget, merge readiness). Useful for
+# private/commercial repos where you still want the local guardrails.
+# Override per-run with `--no-code-leak`.
+privacy:
+  no_code_leak_mode: false
 
 # Anonymous telemetry. Off by default. Run `agentforge telemetry status`
 # to inspect, or `agentforge telemetry enable` to opt in. Source code,

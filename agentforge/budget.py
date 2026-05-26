@@ -44,6 +44,10 @@ class BudgetSnapshot:
     dry_run: bool = False
     stopped_early: bool = False
     stop_reason: str | None = None
+    # Per-call breakdown so downstream tools (scorecards, telemetry) can
+    # attribute chars + roles to specific agents. List of
+    # {"agent", "role", "prompt_chars"}.
+    call_log: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +65,7 @@ class BudgetSnapshot:
             "dry_run": self.dry_run,
             "stopped_early": self.stopped_early,
             "stop_reason": self.stop_reason,
+            "call_log": list(self.call_log),
         }
 
     def estimate_summary(self) -> list[str]:
@@ -213,4 +218,5 @@ class BudgetManager:
             dry_run=self.dry_run,
             stopped_early=self.stopped_early,
             stop_reason=self.stop_reason,
+            call_log=list(self.call_log),
         )

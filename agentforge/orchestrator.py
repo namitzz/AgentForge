@@ -35,8 +35,21 @@ from .agents.base import AgentUnavailable
 from .budget import BudgetExceeded, BudgetManager
 from .config import Config
 from .context_builder import BuiltContext, build_context, summarize_repo
+from .decision_engine import (
+    DECISION_ARTIFACT_NAME,
+    DecisionResult,
+    build_inputs_from_reports,
+    decide as decide_routing,
+)
 from .logger import RunLogger
 from .policy_engine import PolicyEngine, PolicyReport
+from .privacy import (
+    PrivacyMode,
+    build_privacy_report,
+    effective_mode as _effective_privacy_mode,
+    privacy_human_summary,
+    redact_diff_to_stats,
+)
 from .project_rules import load_project_rules
 from .failure import (
     ErrorCategory,
@@ -125,6 +138,75 @@ class Orchestrator:
 
     def _policy_engine(self) -> PolicyEngine:
         return PolicyEngine.from_config_list(self.config.policies)
+
+    def _resolve_privacy(self, no_code_leak: bool | None) -> PrivacyMode:
+        """Pick the effective privacy mode for one run (flag overrides config)."""
+        return _effective_privacy_mode(
+            override=no_code_leak,
+            config_default=getattr(self.config, "privacy_no_code_leak", False),
+        )
+
+    def _emit_privacy(
+        self,
+        logger: RunLogger,
+        privacy: PrivacyMode,
+        notes: list[str] | None = None,
+    ) -> dict:
+        """Save privacy_report.json + emit the Privacy mode block."""
+        report = build_privacy_report(privacy, notes or [])
+        try:
+            logger.write_json("privacy_report.json", report)
+        except OSError:
+            # Observability never breaks the run.
+            pass
+        for line in privacy_human_summary(privacy):
+            self._emit(line)
+        return report
+
+    def _compute_decision(
+        self,
+        *,
+        logger: RunLogger,
+        task: str,
+        classification: Classification | None,
+        risk_report: RiskReport | None,
+        policy_report: PolicyReport | None,
+        security_report: "_security.SecurityReport | None",
+        selected_files_count: int,
+        estimated_prompt_chars: int,
+        dry_run: bool,
+    ) -> DecisionResult:
+        """Compute + save the routing decision and emit a human summary.
+
+        Informational only — the orchestrator's own routing already uses the
+        same signals. This artifact gives an operator a single auditable
+        view of *why* a given set of agents is planned.
+        """
+        inputs = build_inputs_from_reports(
+            task_text=task,
+            task_type=(classification.task_type.value if classification else "unknown"),
+            risk_report=(risk_report.to_dict() if risk_report else None),
+            policy_report=(policy_report.to_dict() if policy_report else None),
+            security_report=(security_report.to_dict() if security_report else None),
+            selected_files_count=selected_files_count,
+            estimated_prompt_chars=estimated_prompt_chars,
+            max_total_chars=self.config.max_total_chars,
+            max_ai_calls=self.config.max_ai_calls_per_run,
+            planner_agent=self.config.agents.planner,
+            implementer_agent=self.config.agents.implementer,
+            reviewer_agent=self.config.agents.reviewer,
+            dry_run=dry_run,
+        )
+        decision = decide_routing(inputs)
+        try:
+            logger.write_json(DECISION_ARTIFACT_NAME, decision.to_dict())
+        except OSError:
+            # Telemetry-style failure: never break the run because we
+            # couldn't write a side-channel artifact.
+            pass
+        for line in decision.human_summary():
+            self._emit(line)
+        return decision
 
     def _run_security_scan(
         self,
@@ -407,17 +489,31 @@ class Orchestrator:
         return kept, report
 
     # --- plan-only flow -----------------------------------------------
-    def plan_only(self, task: str, dry_run: bool = False) -> RunResult:
+    def plan_only(
+        self,
+        task: str,
+        dry_run: bool = False,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
         logger = RunLogger()
         try:
-            result = self._plan_only_impl(logger, task, dry_run)
+            result = self._plan_only_impl(logger, task, dry_run, no_code_leak)
         except KeyboardInterrupt as exc:
             return self._handle_unexpected_failure(logger, exc, step_failed="planning", task=task, dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001 — top-level safety net
             return self._handle_unexpected_failure(logger, exc, step_failed="planning", task=task, dry_run=dry_run)
         return self._apply_status_and_failure(result, logger, step_failed="planning")
 
-    def _plan_only_impl(self, logger: RunLogger, task: str, dry_run: bool) -> RunResult:
+    def _plan_only_impl(
+        self,
+        logger: RunLogger,
+        task: str,
+        dry_run: bool,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        # The planner prompt never carries file contents — only paths — so
+        # plan works the same in No-Code-Leak Mode. Just emit the report.
+        self._emit_privacy(logger, self._resolve_privacy(no_code_leak))
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -471,6 +567,19 @@ class Orchestrator:
         budget.record_planned(planned_calls, planned_chars)
         for line in budget.snapshot().estimate_summary():
             self._emit(line)
+
+        # Decision engine: report-only routing recommendation.
+        self._compute_decision(
+            logger=logger, task=task,
+            classification=classification,
+            risk_report=risk_report,
+            policy_report=policy_report,
+            security_report=None,  # plan_only doesn't run security scan
+            selected_files_count=len(context.selected_files),
+            estimated_prompt_chars=planned_chars,
+            dry_run=dry_run,
+        )
+
         if not dry_run:
             try:
                 budget.enforce_planned_within_caps()
@@ -530,17 +639,70 @@ class Orchestrator:
         )
 
     # --- full solve flow -----------------------------------------------
-    def solve(self, task: str, dry_run: bool = False) -> RunResult:
+    def solve(
+        self,
+        task: str,
+        dry_run: bool = False,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
         logger = RunLogger()
         try:
-            result = self._solve_impl(logger, task, dry_run)
+            result = self._solve_impl(logger, task, dry_run, no_code_leak)
         except KeyboardInterrupt as exc:
             return self._handle_unexpected_failure(logger, exc, step_failed="solve", task=task, dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001
             return self._handle_unexpected_failure(logger, exc, step_failed="solve", task=task, dry_run=dry_run)
         return self._apply_status_and_failure(result, logger, step_failed="solve")
 
-    def _solve_impl(self, logger: RunLogger, task: str, dry_run: bool) -> RunResult:
+    def _solve_impl(
+        self,
+        logger: RunLogger,
+        task: str,
+        dry_run: bool,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        privacy = self._resolve_privacy(no_code_leak)
+        self._emit_privacy(logger, privacy)
+
+        # No-code-leak + real solve = refuse, cleanly. Plan + review still work
+        # under no-code-leak, but solve requires sending code to the
+        # implementer, so we stop with a clear message.
+        if privacy.no_code_leak and not dry_run:
+            manifest = self._build_manifest(
+                logger=logger, mode="solve", task=task,
+                dry_run=False, classification=None,
+            )
+            budget = BudgetManager(self.config)
+            budget.mark_stopped_early(
+                True,
+                reason=(
+                    "No-Code-Leak Mode is enabled, so AgentForge will not "
+                    "send source code to external agents. Use --dry-run, "
+                    "disable this mode, or run local checks only."
+                ),
+            )
+            logger.save_budget(budget.snapshot().to_dict())
+            self._finalize_manifest(logger, manifest, budget)
+            stats = {"files_changed": 0, "additions": 0, "deletions": 0, "file_list": []}
+            final = (
+                "# AgentForge solve refused (No-Code-Leak Mode)\n\n"
+                "AgentForge will not send source code to external agents "
+                "in No-Code-Leak Mode. To proceed:\n"
+                "  - re-run with --dry-run to preview the pipeline locally\n"
+                "  - or disable privacy.no_code_leak_mode in config.yaml\n"
+                "  - or run local-only checks (plan, review, readiness)\n"
+            )
+            logger.save_final_summary(final)
+            logger.fill_missing_placeholders(reason="solve refused under No-Code-Leak Mode")
+            return RunResult(
+                run_id=logger.run_id, run_dir=logger.dir, task=task,
+                classification={}, plan="", branch=None,
+                diff_stats=stats, test_passed=None, review=None,
+                policy_report=None, risk_report=None,
+                dry_run=False, budget=budget.snapshot().to_dict(),
+                final_summary=final,
+                aborted_reason=None,
+            )
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -652,6 +814,19 @@ class Orchestrator:
         budget.record_planned(planned_calls, planned_chars)
         for line in budget.snapshot().estimate_summary():
             self._emit(line)
+
+        # Decision engine: report-only routing recommendation.
+        self._compute_decision(
+            logger=logger, task=task,
+            classification=classification,
+            risk_report=risk_report,
+            policy_report=policy_report,
+            security_report=security_report,
+            selected_files_count=len(context.selected_files),
+            estimated_prompt_chars=planned_chars,
+            dry_run=dry_run,
+        )
+
         try:
             if not dry_run:
                 budget.enforce_planned_within_caps()
@@ -844,17 +1019,30 @@ class Orchestrator:
         )
 
     # --- review-only flow ---------------------------------------------
-    def review_diff_only(self, task: str | None = None, dry_run: bool = False) -> RunResult:
+    def review_diff_only(
+        self,
+        task: str | None = None,
+        dry_run: bool = False,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
         logger = RunLogger()
         try:
-            result = self._review_diff_only_impl(logger, task, dry_run)
+            result = self._review_diff_only_impl(logger, task, dry_run, no_code_leak)
         except KeyboardInterrupt as exc:
             return self._handle_unexpected_failure(logger, exc, step_failed="review", task=task or "", dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001
             return self._handle_unexpected_failure(logger, exc, step_failed="review", task=task or "", dry_run=dry_run)
         return self._apply_status_and_failure(result, logger, step_failed="review")
 
-    def _review_diff_only_impl(self, logger: RunLogger, task: str | None, dry_run: bool) -> RunResult:
+    def _review_diff_only_impl(
+        self,
+        logger: RunLogger,
+        task: str | None,
+        dry_run: bool,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        privacy = self._resolve_privacy(no_code_leak)
+        self._emit_privacy(logger, privacy)
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -894,10 +1082,13 @@ class Orchestrator:
 
         project_rules = self._load_project_rules()
 
+        diff_for_prompt = (
+            redact_diff_to_stats(diff_text) if privacy.no_code_leak else diff_text
+        )
         prompt = build_review_prompt(
             task=task or "(no task description supplied)",
             plan="(plan not provided to review-only mode)",
-            diff=diff_text,
+            diff=diff_for_prompt,
             test_result="(tests not run in review-only mode)",
             project_rules=project_rules,
         )
@@ -974,6 +1165,7 @@ class Orchestrator:
         task: str | None = None,
         dry_run: bool = False,
         base: str | None = None,
+        no_code_leak: bool | None = None,
     ) -> RunResult:
         """Review the current branch against ``base`` (default: main, then master).
 
@@ -982,7 +1174,7 @@ class Orchestrator:
         """
         logger = RunLogger()
         try:
-            result = self._review_pr_impl(logger, task, dry_run, base)
+            result = self._review_pr_impl(logger, task, dry_run, base, no_code_leak)
         except KeyboardInterrupt as exc:
             return self._handle_unexpected_failure(logger, exc, step_failed="review-pr", task=task or "", dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001
@@ -995,7 +1187,10 @@ class Orchestrator:
         task: str | None,
         dry_run: bool,
         base: str | None,
+        no_code_leak: bool | None = None,
     ) -> RunResult:
+        privacy = self._resolve_privacy(no_code_leak)
+        self._emit_privacy(logger, privacy)
         budget = BudgetManager(self.config)
         local = LocalAgent(config=self.config, cwd=self.cwd)
 
@@ -1053,12 +1248,15 @@ class Orchestrator:
 
         # Build the review prompt. Use the risk + policy summaries so the
         # reviewer has the same local-first context the operator sees.
+        diff_for_prompt = (
+            redact_diff_to_stats(diff_text) if privacy.no_code_leak else diff_text
+        )
         prompt = build_pr_review_prompt(
             task=task,
             base_branch=base_branch,
             head_branch=head_branch,
             changed_files=changed,
-            diff=diff_text,
+            diff=diff_for_prompt,
             risk_summary="\n".join(risk_report.human_summary()),
             policy_summary="\n".join(policy_report.human_summary()),
             project_rules=project_rules,
@@ -1071,6 +1269,19 @@ class Orchestrator:
         budget.record_planned(ai_calls=1, chars=len(prompt))
         for line in budget.snapshot().estimate_summary():
             self._emit(line)
+
+        # Decision engine: report-only routing recommendation.
+        self._compute_decision(
+            logger=logger, task=(task or ""),
+            classification=None,  # review-pr doesn't classify the task
+            risk_report=risk_report,
+            policy_report=policy_report,
+            security_report=security_report,
+            selected_files_count=len(changed),
+            estimated_prompt_chars=len(prompt),
+            dry_run=dry_run,
+        )
+
         if not dry_run:
             try:
                 budget.enforce_planned_within_caps()
@@ -1138,6 +1349,467 @@ class Orchestrator:
             risk_report=risk_report.to_dict(),
             dry_run=dry_run,
             budget=budget.snapshot().to_dict(),
+            final_summary=final,
+            aborted_reason=aborted,
+        )
+
+    # --- red-team review --------------------------------------------
+    def redteam(
+        self,
+        task: str | None = None,
+        dry_run: bool = False,
+        base: str | None = None,
+        run: Path | str | None = None,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        """Strict adversarial review for high-risk changes.
+
+        Modes:
+          - ``run`` set: replay an existing run dir. We don't create a new
+            run dir; ``redteam_review.json`` is written into the existing one.
+          - ``base`` set: PR-style review against that base branch.
+          - neither: review the working-tree diff.
+        """
+        if run is not None:
+            run_dir = Path(run)
+            if not run_dir.is_dir():
+                # Build a synthetic logger to write the failure into a new dir.
+                logger = RunLogger()
+                return self._handle_unexpected_failure(
+                    logger,
+                    RuntimeError(f"--run directory does not exist: {run_dir}"),
+                    step_failed="redteam",
+                    task=task or "",
+                    dry_run=dry_run,
+                )
+            # Re-use the existing dir as the logger's home.
+            logger = RunLogger(root=run_dir.parent, run_id=run_dir.name)
+            try:
+                result = self._redteam_replay_impl(logger, run_dir, task, dry_run, no_code_leak)
+            except KeyboardInterrupt as exc:
+                return self._handle_unexpected_failure(
+                    logger, exc, step_failed="redteam-replay",
+                    task=task or "", dry_run=dry_run,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return self._handle_unexpected_failure(
+                    logger, exc, step_failed="redteam-replay",
+                    task=task or "", dry_run=dry_run,
+                )
+            return self._apply_status_and_failure(
+                result, logger, step_failed="redteam-replay",
+            )
+
+        # New-run mode.
+        logger = RunLogger()
+        try:
+            result = self._redteam_impl(logger, task, dry_run, base, no_code_leak)
+        except KeyboardInterrupt as exc:
+            return self._handle_unexpected_failure(
+                logger, exc, step_failed="redteam",
+                task=task or "", dry_run=dry_run,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_unexpected_failure(
+                logger, exc, step_failed="redteam",
+                task=task or "", dry_run=dry_run,
+            )
+        return self._apply_status_and_failure(
+            result, logger, step_failed="redteam",
+        )
+
+    def _redteam_replay_impl(
+        self,
+        logger: RunLogger,
+        run_dir: Path,
+        task: str | None,
+        dry_run: bool,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        privacy = self._resolve_privacy(no_code_leak)
+        self._emit_privacy(logger, privacy)
+        """Re-review a previously-saved run with the red-team prompt."""
+        budget = BudgetManager(self.config)
+
+        # Load the artifacts we need from disk. Missing files become empty
+        # context rather than a hard error.
+        def _read_json(name: str) -> dict | None:
+            p = run_dir / name
+            if not p.exists():
+                return None
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            if isinstance(data, dict) and data.get("placeholder"):
+                return None
+            return data if isinstance(data, dict) else None
+
+        diff_path = run_dir / "diff.patch"
+        diff_text = ""
+        if diff_path.exists():
+            try:
+                diff_text = diff_path.read_text(encoding="utf-8")
+            except OSError:
+                diff_text = ""
+
+        risk = _read_json("risk_report.json") or {}
+        policy = _read_json("policy_report.json") or {}
+        security = _read_json("security_report.json") or {}
+        prior_task = _read_json("task.json") or {}
+
+        manifest = self._build_manifest(
+            logger=logger, mode="redteam-replay",
+            task=(task or prior_task.get("task") or ""),
+            dry_run=dry_run, classification=None,
+        )
+
+        if dry_run:
+            self._emit_planned_workflow(mode="review", classification=None)
+
+        # Derive a changed-files list either from selected_files.json
+        # or by parsing diff.patch as a fallback.
+        changed: list[str] = []
+        sel = run_dir / "selected_files.json"
+        if sel.exists():
+            try:
+                data = json.loads(sel.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    changed = [str(e.get("path", "")) for e in data if isinstance(e, dict)]
+            except (OSError, json.JSONDecodeError):
+                changed = []
+        if not changed:
+            stats = diff_tools.parse_diff_stats(diff_text)
+            changed = list(stats.file_list)
+
+        if not diff_text.strip():
+            raise RuntimeError(
+                f"No diff found in {run_dir} (diff.patch missing or empty). "
+                "There is nothing to red-team."
+            )
+
+        head_branch = git_tools.current_branch(self.cwd) or "HEAD"
+        base_branch = "(saved run)"
+
+        diff_for_prompt = (
+            redact_diff_to_stats(diff_text) if privacy.no_code_leak else diff_text
+        )
+        prompt = self._build_redteam_prompt(
+            task=task or prior_task.get("task"),
+            base_branch=base_branch,
+            head_branch=head_branch,
+            changed=changed,
+            diff_text=diff_for_prompt,
+            risk=risk,
+            policy=policy,
+            security=security,
+        )
+        logger.save_prompts({"redteam": prompt})
+
+        budget.set_dry_run(dry_run)
+        budget.record_files_sent(len(changed))
+        budget.record_planned(ai_calls=1, chars=len(prompt))
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        if not dry_run:
+            try:
+                budget.enforce_planned_within_caps()
+            except BudgetExceeded as exc:
+                budget.mark_stopped_early(True, reason=str(exc))
+                self._emit(f"Aborting redteam: {exc}")
+
+        verdict, aborted = self._call_redteam(
+            logger=logger, budget=budget, prompt=prompt,
+            diff_text=diff_text, changed=changed, dry_run=dry_run,
+        )
+
+        return self._finalize_redteam_result(
+            logger=logger, manifest=manifest, budget=budget,
+            diff_text=diff_text, verdict=verdict, aborted=aborted,
+            head_branch=head_branch, base_branch=base_branch,
+            risk_report_dict=risk, policy_report_dict=policy,
+            task=task or prior_task.get("task") or "",
+            dry_run=dry_run, mode="redteam-replay",
+        )
+
+    def _redteam_impl(
+        self,
+        logger: RunLogger,
+        task: str | None,
+        dry_run: bool,
+        base: str | None,
+        no_code_leak: bool | None = None,
+    ) -> RunResult:
+        privacy = self._resolve_privacy(no_code_leak)
+        self._emit_privacy(logger, privacy)
+        """Fresh red-team run: derive the diff locally (PR or working tree),
+        score risk + policy + security, then call the red-team reviewer."""
+        budget = BudgetManager(self.config)
+        local = LocalAgent(config=self.config, cwd=self.cwd)
+
+        if not git_tools.is_git_repo(self.cwd):
+            raise RuntimeError("not a git repo; cannot run redteam review")
+
+        head_branch = git_tools.current_branch(self.cwd) or "HEAD"
+
+        # Decide diff source.
+        if base:
+            if not git_tools.ref_exists(base, self.cwd):
+                raise RuntimeError(f"base branch '{base}' not found")
+            base_branch = base
+            diff_text = git_tools.diff_between(base, "HEAD", self.cwd)
+            changed = git_tools.changed_files_between(base, "HEAD", self.cwd)
+            self._emit(f"Red-team review: {base}...{head_branch}")
+        else:
+            base_branch = "(working tree)"
+            diff_text = local.git_diff()
+            stats = diff_tools.parse_diff_stats(diff_text)
+            changed = list(stats.file_list)
+            self._emit(f"Red-team review of working-tree diff on {head_branch}")
+
+        if not diff_text.strip():
+            raise RuntimeError(
+                "No diff to review. Either modify files in the working tree, "
+                "commit changes and pass --base <branch>, or pass --run "
+                "<path> to replay an existing run."
+            )
+
+        logger.save_diff(diff_text)
+        logger.save_selected_files([{"path": p, "chars": 0} for p in changed])
+
+        manifest = self._build_manifest(
+            logger=logger, mode="redteam", task=(task or ""),
+            dry_run=dry_run, classification=None,
+        )
+
+        if dry_run:
+            self._emit_planned_workflow(mode="review", classification=None)
+
+        # Risk + policy + security on the changed files.
+        kept_paths, policy_report = self._apply_policies(changed)
+        logger.save_policy_report(policy_report.to_dict())
+
+        # Scan file contents for the security report.
+        scan_pairs = [(p, local.read_file(p)) for p in changed]
+        security_report = _security.scan_files(scan_pairs)
+        security_report.command_safety = _security.is_dangerous_command(
+            self.config.default_test_command
+        )
+        logger.save_security_report(security_report.to_dict())
+        for line in security_report.human_summary():
+            self._emit(line)
+
+        risk_report = self._assess_risk(task or "", changed, logger)
+
+        diff_for_prompt = (
+            redact_diff_to_stats(diff_text) if privacy.no_code_leak else diff_text
+        )
+        prompt = self._build_redteam_prompt(
+            task=task,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            changed=changed,
+            diff_text=diff_for_prompt,
+            risk=risk_report.to_dict(),
+            policy=policy_report.to_dict(),
+            security=security_report.to_dict(),
+        )
+        logger.save_prompts({"redteam": prompt})
+
+        budget.set_dry_run(dry_run)
+        budget.record_files_sent(len(changed))
+        budget.record_planned(ai_calls=1, chars=len(prompt))
+        for line in budget.snapshot().estimate_summary():
+            self._emit(line)
+        if not dry_run:
+            try:
+                budget.enforce_planned_within_caps()
+            except BudgetExceeded as exc:
+                budget.mark_stopped_early(True, reason=str(exc))
+                self._emit(f"Aborting redteam: {exc}")
+
+        verdict, aborted = self._call_redteam(
+            logger=logger, budget=budget, prompt=prompt,
+            diff_text=diff_text, changed=changed, dry_run=dry_run,
+        )
+
+        return self._finalize_redteam_result(
+            logger=logger, manifest=manifest, budget=budget,
+            diff_text=diff_text, verdict=verdict, aborted=aborted,
+            head_branch=head_branch, base_branch=base_branch,
+            risk_report_dict=risk_report.to_dict(),
+            policy_report_dict=policy_report.to_dict(),
+            task=task or "",
+            dry_run=dry_run, mode="redteam",
+        )
+
+    # --- red-team helpers ------------------------------------------------
+    def _build_redteam_prompt(
+        self,
+        *,
+        task: str | None,
+        base_branch: str,
+        head_branch: str,
+        changed: list[str],
+        diff_text: str,
+        risk: dict,
+        policy: dict,
+        security: dict,
+    ) -> str:
+        # Compact human-readable summaries the reviewer can use as context.
+        def _lines(d: dict, keys: list[str]) -> str:
+            return "\n".join(f"- {k}: {d.get(k)}" for k in keys if k in d)
+
+        risk_summary = _lines(risk, ["risk_level", "score", "reasons"])
+        policy_summary = _lines(policy, [
+            "require_review", "require_tests", "require_human_approval",
+            "triggering_policies", "blocked_files",
+        ])
+        security_summary = _lines(security, [
+            "blocked_files", "prompt_injection_warnings",
+            "command_risk", "safe_to_continue",
+        ])
+
+        # Truncate the diff to fit our character budget.
+        max_diff = max(2000, self.config.max_total_chars // 2)
+        capped_diff = diff_tools.truncate_diff(diff_text, max_diff)
+
+        return build_redteam_prompt(
+            task=task,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            changed_files=changed,
+            diff=capped_diff,
+            risk_summary=risk_summary,
+            policy_summary=policy_summary,
+            security_summary=security_summary,
+        )
+
+    def _call_redteam(
+        self,
+        *,
+        logger: RunLogger,
+        budget: BudgetManager,
+        prompt: str,
+        diff_text: str,
+        changed: list[str],
+        dry_run: bool,
+    ) -> tuple[dict | None, str | None]:
+        verdict: dict | None = None
+        aborted: str | None = None
+        reviewer_kind = self.config.agents.reviewer
+
+        if dry_run:
+            self._emit(
+                f"DRY-RUN - would call {reviewer_kind} as red-team reviewer "
+                f"with {len(prompt)} chars on a {len(diff_text)}-char diff "
+                f"covering {len(changed)} file(s). No call made."
+            )
+        elif budget.stopped_early:
+            pass
+        else:
+            try:
+                reviewer = self._agent(reviewer_kind)
+                resp = self._call_agent(budget, reviewer, prompt, role="redteam-reviewer")
+                if resp.ok:
+                    verdict = parse_redteam_response(resp.output)
+                else:
+                    aborted = resp.error or f"reviewer exit {resp.exit_code}"
+            except (BudgetExceeded, AgentUnavailable) as exc:
+                aborted = str(exc)
+                self._emit(
+                    f"Red-team reviewer unavailable: {exc}. Try `--dry-run` "
+                    f"to preview the prompt without calling an agent."
+                )
+
+        if verdict is not None:
+            logger.write_json("redteam_review.json", verdict)
+        return verdict, aborted
+
+    def _finalize_redteam_result(
+        self,
+        *,
+        logger: RunLogger,
+        manifest: RunManifest,
+        budget: BudgetManager,
+        diff_text: str,
+        verdict: dict | None,
+        aborted: str | None,
+        head_branch: str,
+        base_branch: str,
+        risk_report_dict: dict,
+        policy_report_dict: dict,
+        task: str,
+        dry_run: bool,
+        mode: str,
+    ) -> RunResult:
+        if aborted:
+            budget.mark_stopped_early(True, reason=aborted)
+        elif dry_run and not budget.stopped_early:
+            budget.mark_stopped_early(True, reason="dry-run - no agent calls made")
+        logger.save_budget(budget.snapshot().to_dict())
+        self._finalize_manifest(logger, manifest, budget)
+
+        stats = diff_tools.parse_diff_stats(diff_text).to_dict()
+
+        # Reuse the existing summary writer. It expects a PolicyReport /
+        # RiskReport object — pass None for both since they're already
+        # captured in their own artifacts and the verdict carries the
+        # interesting bits.
+        lines: list[str] = []
+        lines.append(f"# AgentForge red-team {logger.run_id}")
+        lines.append("")
+        lines.append(f"- mode: {mode}")
+        lines.append(f"- base: {base_branch}")
+        lines.append(f"- head: {head_branch}")
+        lines.append(f"- task: {task or '(none)'}")
+        if aborted:
+            lines.append(f"- aborted: {aborted}")
+        lines.append("")
+        if verdict:
+            lines.append("## Verdict")
+            lines.append(f"- status: {verdict.get('status')}")
+            lines.append(f"- risk_level: {verdict.get('risk_level')}")
+            lines.append(f"- merge_recommendation: {verdict.get('merge_recommendation')}")
+            lines.append(f"- summary: {verdict.get('summary')}")
+            findings = verdict.get("findings") or []
+            if findings:
+                lines.append("- findings:")
+                for f in findings:
+                    lines.append(
+                        f"  - [{f.get('severity', '?')}] "
+                        f"{f.get('file', '?')}: {f.get('issue', '')}"
+                    )
+            missing = verdict.get("missing_tests") or []
+            if missing:
+                lines.append("- missing_tests:")
+                for t in missing:
+                    lines.append(f"  - {t}")
+            lines.append("")
+
+        lines.append("## Diff stats")
+        lines.append(f"- files changed: {stats.get('files_changed', 0)}")
+        lines.append(f"- +{stats.get('additions', 0)} / -{stats.get('deletions', 0)} lines")
+
+        snap = budget.snapshot()
+        lines.append("")
+        for ln in snap.human_summary():
+            lines.append(ln)
+
+        final = "\n".join(lines)
+        logger.save_final_summary(final)
+        logger.fill_missing_placeholders(
+            reason=("dry-run preview - no agent calls made" if dry_run else f"{mode} mode")
+        )
+
+        return RunResult(
+            run_id=logger.run_id, run_dir=logger.dir, task=task,
+            classification={}, plan="", branch=head_branch,
+            diff_stats=stats, test_passed=None, review=verdict,
+            policy_report=policy_report_dict,
+            risk_report=risk_report_dict,
+            dry_run=dry_run,
+            budget=snap.to_dict(),
             final_summary=final,
             aborted_reason=aborted,
         )

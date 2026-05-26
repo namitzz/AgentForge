@@ -10,6 +10,20 @@
 
 It decides when to use Claude, when to use Codex, when to use local tools, and when to stop. The goal is not maximum agent chatter. The goal is minimum useful AI usage with reviewable, test-gated code changes.
 
+> **Status:** AgentForge is an **MVP**. Local-first, experimental, developer-controlled. Honest about what it isn't — see [Limitations](#limitations).
+
+## Quick demo
+
+A complete walkthrough lives in [DEMO.md](DEMO.md). The whole thing runs locally with **no AI calls, no network, no API keys**:
+
+```bash
+cd demo-projects/tiny-python-app
+agentforge init
+agentforge solve "Add password reset validation to the login flow" --dry-run
+```
+
+That's it — the dry-run preview produces all 13+ artifacts (risk report, policy report, security report, agent decision, prompts, budget, merge-readiness score, ...) in `.agentforge/runs/<timestamp>/`. See [DEMO.md](DEMO.md) for the full flow and expected output.
+
 ## Why AgentForge exists
 
 Most "multi-agent" tools let agents converse until they agree. That burns tokens, ignores the repo's risk surface, and produces changes nobody reviewed. AgentForge replaces that loop with a fixed pipeline:
@@ -416,6 +430,330 @@ Security checks:
 ```
 
 If you want the most conservative posture on top of these defaults, drop the [Minimum secure-default config](#minimum-secure-default-config) block above into your `config.yaml`.
+
+## No-Code-Leak Mode
+
+A privacy-first mode for private or commercial repos where you still want the local guardrails (risk, policy, security, budget, merge readiness) but don't want **any** source code, file contents, or diff bodies leaving the machine.
+
+```bash
+agentforge plan      "Refactor user store" --no-code-leak
+agentforge review                          --no-code-leak
+agentforge review-pr --base main           --no-code-leak
+agentforge redteam   --base main           --no-code-leak
+agentforge solve     "..."                 --no-code-leak           # refused
+agentforge solve     "..."                 --no-code-leak --dry-run # ok
+```
+
+Or enable it globally in `config.yaml`:
+
+```yaml
+privacy:
+  no_code_leak_mode: true
+```
+
+The CLI flag overrides the config for that command. The config setting applies to every run unless `--no-code-leak` is passed explicitly.
+
+### Behaviour
+
+| Step | Normal mode | No-Code-Leak Mode |
+|---|---|---|
+| Repo scan, classifier, risk, policy, security, budget, decision | local | local (unchanged) |
+| Planner prompt (paths + summary only — no contents) | sent | sent |
+| Implementer prompt (file bodies) | sent | **never sent** |
+| Review / PR-review / red-team diff body | sent | **redacted to stats only** |
+| `solve` (real run) | runs | **refused with clean stop_reason** |
+| `solve --dry-run` | runs locally | runs locally |
+| `merge readiness`, `scorecards`, `doctor` | runs | runs |
+
+When a reviewer prompt is generated under No-Code-Leak Mode, the diff body is replaced with:
+
+```
+[Diff content redacted by No-Code-Leak Mode]
+Files changed: 3
+Additions: +47
+Deletions: -2
+Changed file categories:
+  - src/auth/*.py (2 files)
+  - tests/*.py (1 file)
+```
+
+The reviewer sees stats + grouped file categories. No raw code. No leaf filenames in the diff section.
+
+### Solve refusal
+
+`solve` requires sending code to the implementer, so under No-Code-Leak Mode the CLI stops cleanly:
+
+```
+# AgentForge solve refused (No-Code-Leak Mode)
+
+AgentForge will not send source code to external agents in
+No-Code-Leak Mode. To proceed:
+  - re-run with --dry-run to preview the pipeline locally
+  - or disable privacy.no_code_leak_mode in config.yaml
+  - or run local-only checks (plan, review, readiness)
+```
+
+`result.status` is `stopped_early` (not `failed`) — it's an intentional refusal, not an error.
+
+### Artifact
+
+Every run writes `.agentforge/runs/<id>/privacy_report.json`:
+
+```json
+{
+  "no_code_leak_mode": true,
+  "source_code_sent": false,
+  "file_contents_sent": false,
+  "diff_content_sent": false,
+  "external_implementation_allowed": false,
+  "redaction_applied": true,
+  "notes": []
+}
+```
+
+### CLI block
+
+```
+Privacy mode:
+- No-Code-Leak Mode: enabled
+- Source code sent to agents: no
+- File contents sent to agents: no
+- Diff content sent to agents: no
+- External implementation calls allowed: no
+```
+
+## Agent scorecards
+
+AgentForge keeps a small local tally per `(agent, role)` so you can see which agent does what well across runs. Stored in `.agentforge/scorecards.json`. **Local only — no network, no telemetry, no source code collected.**
+
+```bash
+agentforge scorecards            # text view
+agentforge scorecards --json     # machine-readable
+agentforge scorecards reset      # wipe local stats
+```
+
+### What gets tracked
+
+Per `(agent, role)`:
+
+- `tasks_attempted`, `tasks_completed`, `failures`, `dry_runs_seen`
+- `average_chars_sent` (from `budget.call_log` per role)
+- `average_duration_ms` (from `task.json` start/end, split across active roles)
+- **Reviewer only:** `review_approvals`, `review_needs_changes`, `high_risk_reviews`
+- **Implementer only:** `tests_passed_after_agent`, `tests_failed_after_agent`
+- `last_used_at` (ISO timestamp)
+
+Updates happen automatically after every `plan`, `solve`, `review`, and `review-pr`. Dry-runs only bump `dry_runs_seen` — they don't count as attempts or completions.
+
+### Sample output
+
+```
+Agent scorecards:
+
+Claude as planner:
+- Plans attempted: 8
+- Plans completed: 7
+- Failure count: 1
+- Dry runs seen: 3
+- Average chars sent: 1,840
+- Last used: 2026-05-26T15:50:49
+
+Codex as implementer:
+- Tasks attempted: 15
+- Tests passed after implementation: 10
+- Tests failed after implementation: 3
+- Failure count: 2
+- Average chars sent: 4,200
+
+Claude as reviewer:
+- Reviews: 12
+- Approved: 7
+- Needs changes: 5
+- High-risk reviews: 4
+- Failure count: 1
+```
+
+### Source artifacts
+
+The ingester reads only artifacts AgentForge already writes for every run: `task.json` (manifest + dry_run flag), `budget.json` (per-call breakdown), `review.json` (status + risk_level), `test_result.txt` (exit code), `risk_report.json`, and `failure_report.json`. No new data is collected.
+
+### Resilience
+
+If `.agentforge/scorecards.json` is missing or unreadable, AgentForge starts fresh and prints a yellow warning on the next run rather than crashing. `agentforge scorecards reset` is the explicit reset.
+
+## Agent decision engine
+
+Before any agent is called, AgentForge picks the **cheapest workflow that's actually safe** for the task. The decision is computed from local signals (classifier, risk, policy, security, context size, budget caps) and saved to `.agentforge/runs/<id>/decision_report.json` so the routing is auditable.
+
+Four possible decisions:
+
+| Decision | When it fires | Calls |
+|---|---|---|
+| `NO_AI` | Security refused, budget would overrun, or LOW docs task with empty context. | 0 |
+| `SINGLE_AGENT` | LOW-risk code / docs / bug-fix change, no policy review requirement. | 1 |
+| `IMPLEMENT_AND_REVIEW` | MEDIUM-risk task, or LOW-risk with policy `require_review`. | 2 |
+| `FULL_PIPELINE` | HIGH-risk or UNKNOWN-risk task; planner + implementer + reviewer. | 3 |
+
+Computed live before each `plan`, `solve`, and `review-pr`. The result lands in the CLI output too:
+
+```
+Agent decision:
+- Decision: FULL_PIPELINE
+- Planned AI calls: 3
+- Agents:
+  - Planner: claude
+  - Implementer: codex
+  - Reviewer: claude
+- Reasons:
+  - Planner included because risk is HIGH
+  - Reviewer required for HIGH risk task
+  - Task classified as HIGH risk
+  - Human approval required before merge
+  - Tests required by policy or risk
+  - Context is within budget (37,768/80,000 chars)
+- Skipped: (none)
+```
+
+And for a LOW-risk task:
+
+```
+Agent decision:
+- Decision: SINGLE_AGENT
+- Planned AI calls: 1
+- Agents:
+  - Planner: (none)
+  - Implementer: codex
+  - Reviewer: (none)
+- Reasons:
+  - Task classified as LOW risk
+  - Context is within budget (0/80,000 chars)
+- Skipped:
+  - Planner skipped because task is a docs
+  - Reviewer skipped because task is LOW risk and no policy requires review
+```
+
+### Decision rules
+
+- LOW docs / typo / comment tasks → `NO_AI` (empty context) or `SINGLE_AGENT` (Codex only).
+- LOW code tasks → `SINGLE_AGENT` (Codex only, no Claude planning, no review).
+- MEDIUM tasks → `IMPLEMENT_AND_REVIEW` (Codex + Claude review, no planner).
+- HIGH / UNKNOWN tasks → `FULL_PIPELINE` (Claude plan + Codex implement + Claude review).
+- Policy `require_review: true` → reviewer included regardless of risk.
+- Policy `require_human_approval: true` → recorded as a reason; the orchestrator's approval gate still applies before implementation.
+- Security `safe_to_continue: false` → `NO_AI`, run flagged not safe to continue.
+- Budget estimate exceeds `max_total_chars` → `NO_AI`, run flagged not safe to continue.
+- `docs` / `tests` / `bug_fix` tasks never get a planner regardless of risk.
+
+### Artifact schema
+
+```json
+{
+  "decision": "IMPLEMENT_AND_REVIEW",
+  "recommended_agents": {
+    "planner": null,
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "planned_ai_calls": 2,
+  "reasons": [
+    "Reviewer required for MEDIUM risk task",
+    "Task classified as MEDIUM risk",
+    "Tests required by policy or risk",
+    "Context is within budget (37,825/80,000 chars)"
+  ],
+  "skipped_steps": [
+    "Planner skipped because risk is MEDIUM"
+  ],
+  "safe_to_continue": true
+}
+```
+
+The engine is **report-only** for now — it explains why the configured pipeline is appropriate. The orchestrator's actual routing uses the same signals so the recommendation reflects reality.
+
+## Red team review mode
+
+`agentforge redteam` is a stricter, adversarial review designed for high-risk changes (auth, security, database, payment, deployment, secrets, permissions, config). The reviewer is prompted to **assume the change is wrong until proven safe**, and the output is a richer structured verdict than plain `review` / `review-pr`.
+
+```bash
+agentforge redteam                                                # review working-tree diff
+agentforge redteam --task "Review password reset changes"         # add task context
+agentforge redteam --base main                                    # PR-style: branch vs base
+agentforge redteam --run .agentforge/runs/<timestamp>             # replay an existing run
+agentforge redteam --dry-run                                      # preview the prompt, no AI call
+```
+
+### Diff sources
+
+| Flag combination | What gets reviewed |
+|---|---|
+| `--run <path>` | The `diff.patch` already saved in that run directory. The new verdict is written into the same dir. |
+| `--base <branch>` | `git diff <base>...HEAD` (PR-style). |
+| neither | The current working-tree diff. |
+
+If no diff resolves (clean tree + no `--base` + no `--run`) the run fails cleanly with a hint to commit changes or pass `--base`.
+
+### What the red-team reviewer is asked to inspect
+
+15 categories, baked into `agentforge/prompts/redteam_prompt.py`:
+
+- authentication bypass
+- token / session issues
+- password reset abuse
+- user enumeration
+- missing authorization checks
+- missing input validation
+- unsafe database changes
+- migration risks
+- secrets exposure
+- unsafe logging (passwords, tokens, PII)
+- destructive shell or git commands
+- missing tests
+- regression risk
+- overbroad changes (more touched than the task implies)
+- mismatch between task and diff
+
+### Output schema
+
+Saved to `.agentforge/runs/<id>/redteam_review.json`:
+
+```json
+{
+  "status": "needs_changes",
+  "risk_level": "high",
+  "findings": [
+    {
+      "severity": "high",
+      "file": "src/auth/password_reset.py",
+      "issue": "Reset token expiry is not validated server-side.",
+      "why_it_matters": "An old token could still be used to take over an account.",
+      "suggested_fix": "Validate expiry before accepting the reset token."
+    }
+  ],
+  "missing_tests": ["Expired reset token should be rejected"],
+  "merge_recommendation": "do_not_merge",
+  "summary": "..."
+}
+```
+
+If the reviewer returns malformed JSON, AgentForge does **not** crash. It records:
+
+```json
+{
+  "status": "needs_manual_review",
+  "risk_level": "high",
+  "merge_recommendation": "do_not_merge",
+  "summary": "Reviewer returned non-JSON output.",
+  "raw_output": "..."
+}
+```
+
+…so a human can read the raw output.
+
+### Constraints
+
+- Local-first. No GitHub auth. No network beyond your configured agent CLI.
+- Never pushes, merges, or commits. Branch state stays the same.
+- Reuses the regular budget, risk, policy, and security engines, so a redteam run looks like any other in the artifact directory — just with a richer verdict file.
 
 ## Merge readiness score
 
@@ -959,18 +1297,18 @@ ls .agentforge/runs/
 
 ## Roadmap
 
-Rough order of priority:
+Eight tightly-scoped follow-ups are detailed in [`docs/roadmap-issues.md`](docs/roadmap-issues.md), each with a title, description, and acceptance criteria ready to paste into a GitHub issue:
 
-- Token-accurate budgeting using agent-reported usage. Today we count characters.
-- Per-task policy overrides (`--policy` flag).
-- YAML hook for per-task-type routing. Today it lives in `task_classifier.py`.
-- Open a draft PR via `gh` from the agent branch after human approval.
-- Embeddings-based context selection as an opt-in upgrade.
-- Additional agent adapters beyond Claude Code and Codex CLI.
-- Multi-language test-runner auto-detection.
-- Run replay: re-run a failed run with the same prompts and a different agent.
+1. Add real token estimation (replace char-based budget proxy with agent-reported tokens)
+2. Add more agent adapters (Aider / Cursor CLI / local OpenAI-compatible endpoint)
+3. Expand agent scorecards with trends + per-task-type breakdown
+4. Add GitHub PR body generation (`pr_body.md` artifact, no GitHub API call)
+5. Add sandbox / worktree execution (`--sandbox` flag, isolates the user's tree)
+6. Add richer language-aware context selection (import-graph aware)
+7. Add team policy packs (`auth-strict`, `data-migration-strict`)
+8. Add local-only enterprise mode (meta-flag for all conservative defaults)
 
-PRs welcome.
+PRs welcome. The release checklist in [`docs/release-checklist.md`](docs/release-checklist.md) covers what to do before tagging the next version.
 
 ## Limitations
 

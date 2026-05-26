@@ -13,7 +13,9 @@
       "Bash(python -m pytest tests/test_security.py -q)",
       "Bash(python -m agentforge solve \"Add caching to user lookup\" --dry-run)",
       "Bash(python -m agentforge doctor)",
-      "Bash(python -m agentforge init)"
+      "Bash(python -m agentforge init)",
+      "Bash(python -m pytest tests/ -q --tb=short)",
+      "Bash(python -m pytest tests/test_decision_engine.py -q)"
     ]
   }
 }
