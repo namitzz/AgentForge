@@ -49,6 +49,7 @@ from .run_artifacts import RunManifest
 from . import security as _security
 from .prompts.implementation_prompt import build_implementation_prompt
 from .prompts.planning_prompt import build_planning_prompt
+from .prompts.redteam_prompt import build_redteam_prompt, parse_redteam_response
 from .prompts.review_prompt import build_pr_review_prompt, build_review_prompt
 from .task_classifier import Classification, classify
 from .tools import diff_tools, git_tools

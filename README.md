@@ -417,6 +417,96 @@ Security checks:
 
 If you want the most conservative posture on top of these defaults, drop the [Minimum secure-default config](#minimum-secure-default-config) block above into your `config.yaml`.
 
+## Merge readiness score
+
+After any run (real or dry), AgentForge can roll up the artifacts into a single 0-100 score that answers "is this safe to merge?":
+
+```bash
+agentforge readiness                                 # score the latest run
+agentforge readiness --run .agentforge/runs/<id>     # score a specific run
+```
+
+The engine reads `risk_report.json`, `policy_report.json`, `security_report.json`, `budget.json`, `review.json`, `test_result.txt`, `failure_report.json`, and `task.json` and applies a transparent set of deductions. It never calls an agent.
+
+### Levels
+
+| Score | Level | Meaning |
+|---|---|---|
+| 90–100 | `READY` | All core gates passed. Safe to merge. |
+| 70–89  | `READY_WITH_CAUTION` | Core checks passed but warnings worth reviewing. |
+| 40–69  | `NEEDS_WORK` | Several issues need attention before merging. |
+| 0–39   | `DO_NOT_MERGE` | Critical issues block merge. |
+
+### Hard caps
+
+Regardless of arithmetic, the score is forced below `READY` (capped at 89) when any of these holds:
+
+- tests failed
+- review status is `needs_changes`
+- security says `safe_to_continue: false`
+- `failure_report.json` is present
+- human approval is required but not yet recorded
+
+### Deductions
+
+| Trigger | Subtract |
+|---|---|
+| `failure_report.json` present with status `failed` | 35 |
+| Security says `safe_to_continue: false` | 30 |
+| Secret-bearing files were dropped | 25 |
+| Tests failed | 25 |
+| Tests did not run | 15 |
+| Reviewer requested changes | 20 |
+| Risk level `HIGH` | 15 |
+| Risk level `MEDIUM` | 8 |
+| Human approval required (not recorded) | 15 |
+| Policy requires review but none recorded | 10 |
+| Policy requires tests but they did not run | 10 |
+| Run stopped early | 5 |
+| Prompt-injection warnings present | 5 |
+
+### CLI output
+
+```
+Merge readiness:
+- Score: 78/100
+- Level: READY_WITH_CAUTION
+- Recommendation: Do not merge until human approval is recorded.
+
+Passed:
+  - No secret files were sent
+  - Policy checks completed
+  - Diff review completed and approved
+
+Warnings:
+  - Task classified as HIGH risk
+  - Human approval required before merge
+
+Blockers: (none)
+
+Artifact: .agentforge/runs/<id>/merge_readiness.json
+```
+
+### JSON artifact
+
+`merge_readiness.json` is written alongside the other artifacts. CI can grep `level` to gate a merge job:
+
+```json
+{
+  "score": 78,
+  "level": "READY_WITH_CAUTION",
+  "summary": "The change passed core checks but requires human approval because it touches auth-related files.",
+  "passed": ["No secret files were sent", "Policy checks completed", "Diff review completed and approved"],
+  "warnings": ["Task classified as HIGH risk", "Human approval required before merge"],
+  "blockers": [],
+  "recommendation": "Do not merge until human approval is recorded.",
+  "deductions": [
+    {"reason": "HIGH risk task", "points": 15},
+    {"reason": "Human approval required", "points": 15}
+  ]
+}
+```
+
 ## Failure handling
 
 Every run lands in one of five statuses:

@@ -14,6 +14,7 @@ from rich.table import Table
 
 from .config import DEFAULT_CONFIG_PATH, load_config, write_default_config
 from .logger import RUNS_ROOT, latest_run_dir
+from .merge_readiness import MergeReadinessEngine, MERGE_READINESS_ARTIFACT_NAME
 from .orchestrator import Orchestrator, RunResult
 from .project_rules import PROJECT_RULES_REL_PATH, write_default_project_rules
 from . import telemetry
@@ -544,6 +545,77 @@ def telemetry_clear() -> None:
         raise typer.Exit(code=1)
     telemetry.clear_local_data()
     console.print("[green]OK[/green] local telemetry data cleared.")
+
+
+@app.command()
+def readiness(
+    run: Path = typer.Option(None, "--run", help="Run directory to score. Defaults to the latest run."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
+) -> None:
+    """Compute a 0-100 merge readiness score for an AgentForge run.
+
+    Reads the existing run artifacts (risk, policy, security, budget, review,
+    test_result, failure_report) and turns them into a single verdict so you
+    can decide whether to merge. No agents are called.
+
+    Writes merge_readiness.json into the run directory.
+    """
+    target = run if run is not None else latest_run_dir()
+    if target is None:
+        console.print(
+            "[yellow]No runs yet.[/yellow] Try: "
+            "agentforge solve \"...\" --dry-run"
+        )
+        raise typer.Exit(code=1)
+    target = Path(target)
+    if not target.is_dir():
+        console.print(f"[red]Not a directory:[/red] {target}")
+        raise typer.Exit(code=2)
+
+    try:
+        result = MergeReadinessEngine(target).calculate()
+    except Exception as exc:  # noqa: BLE001 — surface as a CLI error, not a crash
+        console.print(f"[red]Could not score run:[/red] {exc}")
+        raise typer.Exit(code=2)
+
+    # Persist the artifact.
+    try:
+        (target / MERGE_READINESS_ARTIFACT_NAME).write_text(
+            json.dumps(result.to_dict(), indent=2), encoding="utf-8",
+        )
+    except OSError as exc:
+        console.print(f"[yellow]Warning:[/yellow] could not write {MERGE_READINESS_ARTIFACT_NAME}: {exc}")
+
+    # Color the level.
+    color = {
+        "READY":              "green",
+        "READY_WITH_CAUTION": "yellow",
+        "NEEDS_WORK":         "yellow",
+        "DO_NOT_MERGE":       "red",
+    }.get(result.level, "white")
+    console.print(Panel.fit(
+        f"score: [bold]{result.score}/100[/bold]\n"
+        f"level: [{color}]{result.level}[/{color}]\n"
+        f"recommendation: {result.recommendation}\n"
+        f"summary: {result.summary}",
+        title="Merge readiness",
+        border_style=color,
+    ))
+    if result.passed:
+        console.print("[green]Passed:[/green]")
+        for item in result.passed:
+            console.print(f"  - {item}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for item in result.warnings:
+            console.print(f"  - {item}")
+    if result.blockers:
+        console.print("[red]Blockers:[/red]")
+        for item in result.blockers:
+            console.print(f"  - {item}")
+    console.print(
+        f"\n[dim]Artifact: {target / MERGE_READINESS_ARTIFACT_NAME}[/dim]"
+    )
 
 
 @app.command()
