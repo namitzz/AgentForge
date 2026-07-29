@@ -22,7 +22,7 @@ def test_bug_fix_skips_planner():
     c = classify("fix the off-by-one in pagination")
     assert c.task_type == TaskType.BUG_FIX
     assert c.routing.planner is None
-    assert c.routing.implementer == "codex"
+    assert c.routing.implementer == "claude"
 
 
 def test_security_forces_review():

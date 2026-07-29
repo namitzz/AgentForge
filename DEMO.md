@@ -2,7 +2,7 @@
 
 AgentForge is a **cost-aware control plane for AI coding agents** that adds budget caps, risk scoring, policy checks, security scanning, and audit logs so a developer stays in charge of every change.
 
-This demo runs entirely **locally** with **zero AI calls** — you don't need Claude, Codex, an API key, or a network connection.
+This demo runs entirely **locally** with **zero AI calls** — you don't need the Claude CLI logged in, an API key, or a network connection.
 
 ## Setup (10 seconds)
 
@@ -77,7 +77,7 @@ Agent decision:
 - Planned AI calls: 3
 - Agents:
   - Planner: claude
-  - Implementer: codex
+  - Implementer: claude
   - Reviewer: claude
 - Reasons:
   - HIGH risk task
@@ -103,7 +103,15 @@ Merge readiness:
 Every run writes a complete artifact set:
 
 ```bash
+# Bash / zsh
 ls .agentforge/runs/$(ls -t .agentforge/runs | head -1)/
+
+# PowerShell
+Get-ChildItem .agentforge/runs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+# Or just list the runs and pick by timestamp:
+ls .agentforge/runs/
+ls .agentforge/runs/<timestamp>/
 ```
 
 The interesting files:

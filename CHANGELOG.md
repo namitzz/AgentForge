@@ -4,7 +4,13 @@ All notable changes to AgentForge are documented here. Format follows [Keep a Ch
 
 ## Unreleased
 
-_Nothing yet._
+### Added
+
+- **Claude Code plugin + marketplace.** The repo now ships `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, so it can be installed as a Claude Code plugin (`/plugin marketplace add namitzz/AgentForge` → `/plugin install agentforge@agentforge-marketplace`). Adds `/agentforge:solve|plan|review|readiness|doctor` slash commands (in `commands/`) and an auto-invoked `agentforge-guardrails` skill (in `skills/`) that routes risky changes through AgentForge's local checks. Commands fall back to `python -m agentforge` when the console script isn't on PATH. See [docs/plugin.md](docs/plugin.md). Validated with `claude plugin validate`.
+
+### Changed
+
+- **Claude-only by default.** Every role (planner / implementer / reviewer) now defaults to `claude`; the previous `implementer: codex` default is gone. Other coding-agent CLI adapters remain swappable in `config.yaml` but nothing beyond the `claude` CLI is required. `agentforge doctor` now checks only the agent CLIs actually referenced by the configured roles, so an unused Codex no longer shows a warning. Risk-report workflow text and docs updated to Claude-first wording.
 
 ## 0.1.0 - 2026-05-22
 

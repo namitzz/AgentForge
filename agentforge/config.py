@@ -14,8 +14,10 @@ DEFAULT_CONFIG_PATH = Path("config.yaml")
 
 @dataclass
 class AgentRoutes:
+    # Claude is the default for every role. Other CLI adapters remain
+    # swappable via config, but AgentForge ships Claude-only out of the box.
     planner: str = "claude"
-    implementer: str = "codex"
+    implementer: str = "claude"
     reviewer: str = "claude"
 
 
@@ -122,16 +124,21 @@ max_files_sent: 8
 max_chars_per_file: 12000
 max_total_chars: 80000
 
+# The Claude CLI command AgentForge shells out to. Must be on PATH.
 claude_command: "claude --print"
+# Optional: another coding-agent CLI you can swap into any role below.
+# Left here for extensibility; the defaults use Claude for everything.
 codex_command: "codex exec"
 
 # Per-command (agent or test) timeout in seconds. Lower it for tight CI
 # environments; raise it for big refactors or slow test suites.
 command_timeout_seconds: 600
 
+# Claude-only by default. Change any role to another configured adapter
+# (e.g. "codex") if you have that CLI installed and want to swap it in.
 agents:
   planner: claude
-  implementer: codex
+  implementer: claude
   reviewer: claude
 
 ignore_dirs:

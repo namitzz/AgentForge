@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agentforge",
+  "displayName": "AgentForge",
+  "version": "0.1.0",
+  "description": "Cost-aware guardrails for Claude coding runs. Adds risk scoring, policy checks, security scanning, budget caps, and auditable run artifacts as slash commands and an auto-invoked guardrail skill for Claude Code.",
+  "author": {
+    "name": "namitzz",
+    "url": "https://github.com/namitzz/AgentForge"
+  },
+  "homepage": "https://github.com/namitzz/AgentForge",
+  "repository": "https://github.com/namitzz/AgentForge",
+  "license": "MIT",
+  "keywords": [
+    "ai-agents",
+    "coding-agent",
+    "ai-code-review",
+    "ai-governance",
+    "cost-control",
+    "risk-scoring",
+    "developer-tools"
+  ]
+}

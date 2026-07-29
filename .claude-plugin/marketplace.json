@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "agentforge-marketplace",
+  "owner": {
+    "name": "namitzz",
+    "url": "https://github.com/namitzz/AgentForge"
+  },
+  "metadata": {
+    "description": "Marketplace hosting the AgentForge plugin: cost-aware guardrails for Claude coding runs."
+  },
+  "plugins": [
+    {
+      "name": "agentforge",
+      "source": "./",
+      "description": "Cost-aware guardrails for Claude coding runs: risk scoring, policy + security checks, budget caps, and auditable run artifacts, surfaced as slash commands and an auto-invoked guardrail skill for Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "namitzz"
+      },
+      "keywords": ["ai-governance", "ai-code-review", "cost-control"]
+    }
+  ]
+}

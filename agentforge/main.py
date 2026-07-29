@@ -382,27 +382,31 @@ def doctor(
             f"missing — created by `agentforge init` at {PROJECT_RULES_REL_PATH}",
         ))
 
-    # Claude / Codex / test command + telemetry / security — all need cfg.
+    # Agent CLIs + test command + telemetry / security — all need cfg.
     if cfg is not None:
-        # Claude CLI
-        claude_bin = shlex.split(cfg.claude_command or "")[:1]
-        if claude_bin and _shutil.which(claude_bin[0]):
-            rows.append(("Claude CLI", "ok", f"`{cfg.claude_command}` -> {_shutil.which(claude_bin[0])}"))
-        else:
-            rows.append((
-                "Claude CLI", "warn",
-                f"Optional: '{claude_bin[0] if claude_bin else '?'}' not on PATH. Dry-run mode still works.",
-            ))
-
-        # Codex CLI
-        codex_bin = shlex.split(cfg.codex_command or "")[:1]
-        if codex_bin and _shutil.which(codex_bin[0]):
-            rows.append(("Codex CLI", "ok", f"`{cfg.codex_command}` -> {_shutil.which(codex_bin[0])}"))
-        else:
-            rows.append((
-                "Codex CLI", "warn",
-                f"Optional: '{codex_bin[0] if codex_bin else '?'}' not on PATH. Dry-run mode still works.",
-            ))
+        # Only check the agent CLIs actually referenced by the configured
+        # roles. Claude-only config -> just the Claude row. Swap a role to
+        # another adapter and its CLI shows up here too.
+        _command_for = {
+            "claude": cfg.claude_command,
+            "codex": cfg.codex_command,
+        }
+        used_agents: list[str] = []
+        for role_agent in (cfg.agents.planner, cfg.agents.implementer, cfg.agents.reviewer):
+            if role_agent and role_agent not in used_agents:
+                used_agents.append(role_agent)
+        for agent_name in used_agents:
+            command = _command_for.get(agent_name, agent_name)
+            bin_first = shlex.split(command or "")[:1]
+            label = f"{agent_name.capitalize()} CLI"
+            if bin_first and _shutil.which(bin_first[0]):
+                rows.append((label, "ok", f"`{command}` -> {_shutil.which(bin_first[0])}"))
+            else:
+                rows.append((
+                    label, "warn",
+                    f"'{bin_first[0] if bin_first else '?'}' not on PATH. "
+                    f"Real runs need it; --dry-run works without it.",
+                ))
 
         # Test command configured
         test_cmd = (cfg.default_test_command or "").strip()
@@ -430,8 +434,7 @@ def doctor(
                 "consider adding secret_files + a 'Never send secrets' policy in config.yaml",
             ))
     else:
-        rows.append(("Claude CLI",        "warn", "(skipped — no config)"))
-        rows.append(("Codex CLI",         "warn", "(skipped — no config)"))
+        rows.append(("Agent CLIs",        "warn", "(skipped — no config)"))
         rows.append(("Test command",      "warn", "(skipped — no config)"))
         rows.append(("Security defaults", "warn", "(skipped — no config)"))
 

@@ -4,49 +4,70 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> Cost-aware governance for Claude, Codex, and future coding agents.
+> **AgentForge is a local-first control plane for Claude coding runs.** It helps developers decide when to call Claude versus run a free local check, while enforcing budgets, risk scoring, policy checks, security scanning, and auditable run artifacts. Ships Claude-only; runs on the command line or as a Claude Code plugin.
 
-**AgentForge is not another coding agent. It is a cost-aware control plane for coding agents.**
-
-It decides when to use Claude, when to use Codex, when to use local tools, and when to stop. The goal is not maximum agent chatter. The goal is minimum useful AI usage with reviewable, test-gated code changes.
-
-> **Status:** AgentForge is an **MVP**. Local-first, experimental, developer-controlled. Honest about what it isn't — see [Limitations](#limitations).
+> **Status: MVP / experimental / developer-controlled.** Designed for safe AI-assisted coding workflows on a single machine. Not production-ready. Not a hosted service. Not a replacement for human code review. See [Not yet implemented](#not-yet-implemented) below.
 
 ## Quick demo
 
-A complete walkthrough lives in [DEMO.md](DEMO.md). The whole thing runs locally with **no AI calls, no network, no API keys**:
+The whole demo runs locally with **no AI calls, no network, no API keys**:
 
 ```bash
+git clone https://github.com/namitzz/AgentForge.git
+cd AgentForge
+pip install -e .
+
 cd demo-projects/tiny-python-app
 agentforge init
 agentforge solve "Add password reset validation to the login flow" --dry-run
+agentforge status
 ```
 
-That's it — the dry-run preview produces all 13+ artifacts (risk report, policy report, security report, agent decision, prompts, budget, merge-readiness score, ...) in `.agentforge/runs/<timestamp>/`. See [DEMO.md](DEMO.md) for the full flow and expected output.
+The dry-run preview produces a full audit trail (risk report, policy report, security report, decision report, prompts, budget, merge-readiness score, ...) under `.agentforge/runs/<timestamp>/`. See [DEMO.md](DEMO.md) for the full flow and expected output.
 
-## Why AgentForge exists
+## Use it as a Claude Code plugin
 
-Most "multi-agent" tools let agents converse until they agree. That burns tokens, ignores the repo's risk surface, and produces changes nobody reviewed. AgentForge replaces that loop with a fixed pipeline:
+This repo doubles as a **Claude Code plugin marketplace**. Install it to get `/agentforge:*` slash commands and an auto-invoked guardrail skill inside your normal Claude Code session:
 
-- A local classifier picks the cheapest valid route for each task.
-- Only the files the task needs are sent.
-- The reviewer sees only the diff.
-- One revision pass, then stop.
-- Runs stop early when tests pass and risk is low.
-- Every step is logged and budget-enforced.
+```
+/plugin marketplace add namitzz/AgentForge
+/plugin install agentforge@agentforge-marketplace
+```
 
-If a task can run cheaper, AgentForge will run it cheaper. If it cannot run safely, AgentForge stops and asks.
+Then `pip install -e .` once so the `agentforge` CLI the commands call is on PATH. Full details, commands, and local-dev install in [docs/plugin.md](docs/plugin.md).
 
-## What makes AgentForge different
+## What works today
 
-- **Budget-first design.** Hard caps on AI calls, files sent, characters sent, and review loops. Enforced *before* each call, not after.
-- **Diff-only review.** The reviewer never sees full source. A 10k-line repo with a 50-line change costs a 50-line review prompt.
-- **Risk scoring.** Every task is scored LOW / MEDIUM / HIGH locally before any agent runs. HIGH-risk changes require human approval.
-- **Policy rules.** Declarative YAML to block secrets, force review on risky paths, and gate on human approval.
-- **Audit-friendly run logs.** Every run writes a stable set of structured artifacts to `.agentforge/runs/<timestamp>/`.
-- **Local-first scanning.** Repo walking, secret filtering, binary detection — all local.
-- **No endless agent debate.** One pipeline, at most one revision pass, then stop.
-- **Model-neutral architecture.** Agents are CLI adapters. Swap Claude for Codex per role in `config.yaml`. No SDK lock-in.
+Every item below is implemented in this repo and covered by tests:
+
+- ✅ **Dry-run mode.** `--dry-run` works on `plan`, `solve`, `review`, `review-pr`, and `redteam`. Builds the full prompt set without calling any agent. Writes complete artifacts.
+- ✅ **Local risk scoring.** Keyword + path heuristic → LOW (0–39) / MEDIUM (40–69) / HIGH (70–100) score per task. Saved to `risk_report.json`.
+- ✅ **Policy checks.** Declarative YAML (`block:` / `match:` / `require_review` / `require_tests` / `require_human_approval`) → `policy_report.json`.
+- ✅ **Security checks.** Local scans for secrets in selected file contents (AWS / GitHub / OpenAI / Anthropic / JWT / PEM / SSH / etc.), prompt-injection phrases, and destructive shell commands → `security_report.json`.
+- ✅ **Budget estimates + summaries.** Up-front "planned AI calls / chars" + final "actuals" with `stopped_early` and `stop_reason`. Hard caps enforced before each call.
+- ✅ **Run artifacts.** Every run writes a stable set of structured JSON / Markdown files under `.agentforge/runs/<timestamp>/`. Placeholders fill in for skipped steps.
+- ✅ **PR-style local diff review.** `agentforge review-pr` (working branch vs base) and `agentforge review` (working-tree diff). Diff-only — the reviewer never sees full source.
+- ✅ **Red-team review.** `agentforge redteam` with a stricter adversarial prompt and richer structured findings.
+- ✅ **Merge-readiness score.** `agentforge readiness` rolls existing artifacts into one 0–100 verdict (READY / READY_WITH_CAUTION / NEEDS_WORK / DO_NOT_MERGE).
+- ✅ **Agent decision engine.** Reports `NO_AI / SINGLE_AGENT / IMPLEMENT_AND_REVIEW / FULL_PIPELINE` before any agent is called.
+- ✅ **No-Code-Leak Mode.** `--no-code-leak` (or `privacy.no_code_leak_mode: true`) prevents source / file bodies / diff bodies from ever reaching an agent.
+- ✅ **Demo project.** Self-contained `demo-projects/tiny-python-app/` exercises the whole pipeline.
+- ✅ **Doctor / onboarding.** `agentforge doctor` audits the environment + config. `agentforge init` writes starter files with friendly next-step guidance.
+- ✅ **Agent scorecards.** Local per-(agent, role) tally across runs (`.agentforge/scorecards.json`).
+- ✅ **Optional anonymous telemetry.** Off by default. Closed-set allowlist of scalars only — never code, paths, prompts, or secrets. See [PRIVACY.md](PRIVACY.md).
+
+## Not yet implemented
+
+Being honest about the gaps so you can decide whether AgentForge fits your need:
+
+- ❌ **No web UI.** CLI only.
+- ❌ **No hosted service.** AgentForge runs on your machine and only your machine.
+- ❌ **No automatic GitHub PR creation.** You inspect with `git diff main` and merge / push yourself. PR-body generation is on the roadmap.
+- ❌ **No token-accurate billing.** Costs are character-based today; token counts are on the roadmap.
+- ❌ **No guarantee of perfect security detection.** The secret + injection scanners are pattern-based and best-effort. Obfuscated secrets or novel injection phrasings can slip through.
+- ❌ **No replacement for human code review.** AgentForge layers checks on top of human judgement; it does not replace it.
+
+See [docs/roadmap-issues.md](docs/roadmap-issues.md) for the eight follow-up issues sized for individual PRs.
 
 ## How the workflow works
 
@@ -57,6 +78,8 @@ user task
   -> minimal context build  (no AI)
   -> policy check           (no AI)
   -> risk scoring           (no AI)
+  -> security scan          (no AI)
+  -> decision engine        (no AI)
   -> planning               (1 AI call, optional)
   -> isolated git branch    (no AI)
   -> implementation         (1 AI call, only relevant files)
@@ -66,1049 +89,114 @@ user task
   -> summary + artifacts    (no AI)
 ```
 
-Seven of the eleven steps use zero AI. Defaults cap each run at 5 AI calls and 80k characters.
+Most of the pipeline uses zero AI. Defaults cap each run at 5 AI calls and 80k characters.
 
-## How it saves AI usage
+## What makes AgentForge different
 
-| Mechanism | What it does |
+- **Budget-first design.** Hard caps on AI calls, files sent, characters sent, and review loops. Enforced *before* each call, not after.
+- **Diff-only review.** The reviewer never sees full source. A 10k-line repo with a 50-line change costs a 50-line review prompt.
+- **Risk scoring.** Every task is scored LOW / MEDIUM / HIGH locally before any agent runs.
+- **Policy rules.** Declarative YAML to block secrets, force review on risky paths, and gate on human approval.
+- **Audit-friendly run logs.** Every run writes a stable set of structured artifacts.
+- **Local-first scanning.** Repo walking, secret filtering, binary detection — all local.
+- **No endless agent debate.** One pipeline, at most one revision pass, then stop.
+- **Claude-first, not locked in.** Ships Claude-only for every role. Agents are thin CLI adapters, so you can swap another coding-agent CLI into any role in `config.yaml` if you want. No SDK lock-in.
+
+## Deep dives
+
+Detailed docs live in [`docs/`](docs/) so this README stays scannable:
+
+| Topic | File |
 |---|---|
-| Local task classification | Bug fixes skip the planner. Docs skip the reviewer. Tests skip both. |
-| Minimal context | Top-N relevant files get sent. Never the whole repo. |
-| Per-file + total caps | `max_chars_per_file` and `max_total_chars` enforced before any prompt is built. |
-| Diff-only review | Reviewer prompt scales with change size, not repo size. |
-| Bounded revision loop | One revision pass max. |
-| Early stop | If tests pass and the diff is low-risk, review is skipped entirely. |
-| Hard budget | `BudgetExceeded` raised before going over the cap. |
-| Dry-run mode | Preview the exact prompts and routing decisions for free. |
-| Risk-aware routing | LOW-risk changes get a lighter pipeline. |
+| Budget control | [docs/budget.md](docs/budget.md) |
+| Policy rules | [docs/policies.md](docs/policies.md) |
+| Security defaults | [docs/security.md](docs/security.md) |
+| No-Code-Leak Mode (content privacy) | [docs/privacy.md](docs/privacy.md) |
+| Run artifacts | [docs/run-artifacts.md](docs/run-artifacts.md) |
+| Failure handling + error categories | [docs/failure-handling.md](docs/failure-handling.md) |
+| Demo (full walkthrough) | [DEMO.md](DEMO.md) |
+| Usage reference | [USAGE.md](USAGE.md) |
+| Anonymous telemetry (off by default) | [PRIVACY.md](PRIVACY.md) |
+| Reporting a vulnerability | [SECURITY.md](SECURITY.md) |
+| Roadmap (8 issues) | [docs/roadmap-issues.md](docs/roadmap-issues.md) |
+| Release checklist | [docs/release-checklist.md](docs/release-checklist.md) |
 
-## Budget control
+## Install
 
-Every run shows its budget twice. Once up front, as an **estimate** built from the routing + the prompts the orchestrator has prepared:
+Requires Python 3.11+, git, and (for real runs) the `claude` CLI on PATH.
 
-```
-Budget estimate:
-- Planned AI calls: 3/5
-- Files selected: 5/8
-- Estimated chars sent: 34,200
-- Review loops allowed: 1
-- Dry run: no
-```
-
-And once at the end, as a **summary** of the actuals:
-
-```
-Budget summary:
-- AI calls used: 2/5
-- Review loops used: 1/1
-- Files sent: 5/8
-- Estimated chars sent: 34,200
-- Stopped early: no
-```
-
-The summary appends `Stop reason: ...` whenever a run stops short — for example because tests passed and review wasn't required (early stop), the agent CLI wasn't installed (abort), or the caller declined the human-approval prompt.
-
-`BudgetManager` enforces these caps in `config.yaml`:
-
-```yaml
-max_ai_calls_per_run: 5
-max_review_loops: 1
-max_files_sent: 8
-max_chars_per_file: 12000
-max_total_chars: 80000
-```
-
-If the up-front estimate would exceed `max_ai_calls_per_run` or `max_total_chars`, the run aborts before any agent is contacted, with the exact message that exceeded the cap. If the estimate fits but an in-flight call would push us over, `BudgetExceeded` is raised at that point and `_finalize_aborted` writes a complete artifact set so the partial work is still inspectable.
-
-Approximation note: cost is character-based, not token-accurate. Good enough to keep spend bounded; not accurate to the cent.
-
-Every run also writes the full structure to `.agentforge/runs/<timestamp>/budget.json`:
-
-```json
-{
-  "ai_calls": 2,
-  "review_loops": 1,
-  "chars_sent": 34200,
-  "files_sent": 5,
-  "max_ai_calls": 5,
-  "max_review_loops": 1,
-  "max_total_chars": 80000,
-  "max_files_sent": 8,
-  "max_chars_per_file": 12000,
-  "planned_ai_calls": 3,
-  "planned_chars_sent": 35000,
-  "dry_run": false,
-  "stopped_early": false,
-  "stop_reason": null
-}
-```
-
-## Risk scoring
-
-Before any agent runs, AgentForge scores the task on a 0–100 scale and maps it to LOW (0–39), MEDIUM (40–69), or HIGH (70–100). The score combines task keywords with selected file paths.
-
-```
-$ python -m agentforge plan "Add password reset to login flow" --dry-run
-
-Risk assessment:
-- Level: HIGH
-- Score: 75/100
-- Reasons:
-  - Task mentions high-risk topics: login, password
-- Recommended workflow:
-  - Claude planning required
-  - Codex implementation allowed
-  - Tests strongly recommended
-  - Claude diff review required
-  - Human approval required before merge
-```
-
-Examples by level:
-
-```
-LOW     python -m agentforge plan "Fix typo in README"
-MEDIUM  python -m agentforge plan "Refactor the user profile component"
-HIGH    python -m agentforge plan "Add password reset to login flow"
-```
-
-The full breakdown is written to `risk_report.json` for every run.
-
-## Dry run
-
-`--dry-run` is the way to try AgentForge without installing Claude, Codex, or any API key. It works on every workflow command:
+### Editable install (recommended)
 
 ```bash
-python -m agentforge plan      "Fix the off-by-one in pagination"     --dry-run
-python -m agentforge solve     "Add password reset validation"        --dry-run
-python -m agentforge review    --task "added webhook check"           --dry-run
-python -m agentforge review-pr --task "Review password reset changes" --dry-run
+git clone https://github.com/namitzz/AgentForge.git
+cd AgentForge
+
+python -m venv .venv
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+# Windows (cmd)
+.venv\Scripts\activate.bat
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -e .
+
+# Optional dev extras (pytest)
+pip install -e ".[dev]"
+
+# Verify
+agentforge --help
+agentforge doctor
 ```
 
-What dry-run **does**:
+`python -m agentforge ...` works without `pip install -e .` if you'd rather not install.
 
-- Scans the repo, classifies the task, picks files for the context window.
-- Runs local risk scoring + policy checks against the selected files.
-- Builds the exact prompts that would be sent (planner, implementer, reviewer).
-- Prints the planned agent workflow, the file list, the budget estimate.
-- Writes the full artifact set under `.agentforge/runs/<timestamp>/` so you can inspect every prompt and decision.
+## Risk scoring at a glance
 
-What dry-run **does not** do:
-
-- Call Claude or Codex.
-- Modify any files.
-- Create a git branch.
-- Run any destructive command.
-
-Sample output:
+Before any agent runs, AgentForge scores the task on 0–100 and maps to LOW (0–39) / MEDIUM (40–69) / HIGH (70–100):
 
 ```
-Dry run: enabled
-No external agents will be called.
-No files will be modified.
-
-Planned workflow:
-  1. Local scan
-  2. Task classification
-  3. Context selection
-  4. Policy check
-  5. Risk assessment
-  6. Claude planning prompt would be generated
-  7. Codex implementation prompt would be generated
-  8. Tests would run
-  9. Claude diff review prompt would be generated
-
-Files that would be sent:
-  - src/auth/login.py
-  - src/auth/password_reset.py
-  - src/auth/models.py
-  - src/utils/validators.py
-  - tests/test_auth.py
-
-Risk assessment:
-- Level: HIGH
-- Score: 85/100
-- Reasons:
-  - Task mentions high-risk topics: login, password, auth
-  - Selected file paths include sensitive areas: auth/, /auth.
-- Recommended workflow:
-  - Claude planning required
-  - Codex implementation allowed
-  - Tests strongly recommended
-  - Claude diff review required
-  - Human approval required before merge
-
-Policy checks:
-- Blocked files: none
-- Review required: yes
-- Tests required: yes
-- Human approval required: yes
-- Reasons:
-  - Auth changes require review
-  - Sensitive flows require human approval
-
-Budget estimate:
-- Planned AI calls: 3/5
-- Files selected: 5/8
-- Estimated chars sent: 42,180
-- Review loops allowed: 1
-- Dry run: yes
-
-Run artifacts saved to:
-  .agentforge/runs/20260522-141207/
+LOW     agentforge plan "Fix typo in README"
+MEDIUM  agentforge plan "Refactor the user profile component"
+HIGH    agentforge plan "Add password reset to login flow"
 ```
 
-Use it as a smoke test in CI, before any real `solve` on a new repo, or when the agent CLIs simply aren't installed yet. If an agent CLI is missing, AgentForge fails fast and explicitly suggests `--dry-run` in the error message.
-
-## Project rules
-
-`agentforge init` writes a starter file at `.agentforge/project_rules.md`. Anything you put there gets pasted verbatim into the planner, implementer, and reviewer prompts on every run — a small memory file so you don't have to repeat project conventions on the command line.
-
-Default contents:
-
-```markdown
-# Project Rules
-
-- Keep changes small and focused.
-- Prefer existing project style.
-- Do not modify authentication, security, database, or deployment files without review.
-- Do not send secrets or environment files to AI agents.
-- Explain risky changes clearly.
-- Do not auto-merge or force-push changes.
-```
-
-Edit it to taste — code style, naming conventions, hard "don't touch" zones, framework-specific guidance, links to internal docs. The file is plain Markdown and free-form. If it's missing, the run continues safely and the CLI notes:
-
-```
-Project rules: none found (continuing safely; create .agentforge/project_rules.md to add project-specific guidance)
-```
-
-When it's present:
-
-```
-Project rules: loaded from .agentforge/project_rules.md (304 chars)
-```
-
-The rules show up in `prompts.json` as part of each agent's prompt, so the audit trail makes it clear what guidance was active for a given run. No database, no external service — just one Markdown file in your repo.
-
-## Policy rules
-
-Declarative governance lives in `config.yaml`:
-
-```yaml
-policies:
-  - name: "Never send secrets to AI"
-    block:
-      - ".env"
-      - "*.pem"
-      - "credentials.json"
-      - "**/secrets*"
-
-  - name: "Auth changes require review"
-    match:
-      - "auth/**"
-      - "**/login*"
-      - "**/security*"
-    require_review: true
-    require_tests: true
-
-  - name: "Database changes require human approval"
-    match:
-      - "migrations/**"
-      - "**/schema.sql"
-      - "**/models.py"
-    require_human_approval: true
-```
-
-The `PolicyEngine` (in `agentforge/policy_engine.py`) evaluates these rules against the set of files the run is about to send to an agent. `block:` patterns are dropped from the context before any prompt is built. `match:` patterns escalate the run: force review, force tests, prompt for human approval. Decisions are saved to `policy_report.json`.
-
-Sample terminal output:
-
-```
-Policy checks:
-- Blocked files: .env
-- Review required: yes
-- Tests required: yes
-- Human approval required: yes
-- Reasons:
-  - Auth changes require review
-  - Never send secrets to AI
-```
-
-Pattern matching supports glob syntax (`**/x` for any depth, `dir/**` for everything under a dir, plain `fnmatch` otherwise). Empty pattern lists are skipped without error.
-
-### Minimum secure-default config
-
-If you want the most conservative posture, start from this. Tighten the budget caps, expand the secret file and policy lists, force review + tests + human approval for anything touching auth, secrets, or the database. Drop into `config.yaml`:
-
-```yaml
-# Tight budget. Fail closed when in doubt.
-max_ai_calls_per_run: 3
-max_review_loops: 0
-max_files_sent: 5
-max_chars_per_file: 8000
-max_total_chars: 40000
-
-# Files always filtered by name before any prompt is built.
-secret_files:
-  - .env
-  - .env.local
-  - .env.production
-  - credentials.json
-  - id_rsa
-  - id_ed25519
-
-policies:
-  - name: "Never send secrets to AI"
-    block:
-      - ".env"
-      - ".env.*"
-      - "*.pem"
-      - "*.key"
-      - "credentials*"
-      - "**/secrets*"
-      - "**/private*"
-      - "**/id_rsa*"
-      - "**/id_ed25519*"
-
-  - name: "Sensitive paths require human approval"
-    match:
-      - "**/auth*"
-      - "**/login*"
-      - "**/security*"
-      - "migrations/**"
-      - "**/schema*"
-      - "**/models.py"
-    require_review: true
-    require_tests: true
-    require_human_approval: true
-```
-
-On top of those rules, the content scanner in `agentforge/security.py` drops any file whose body matches a known credential pattern (AWS, GitHub, OpenAI, Anthropic, JWT, PEM private key, SSH key) regardless of its name. The pattern name lands in `security_report.json`; the actual secret value is never logged.
-
-## Security defaults
-
-Without any config changes, every run already does this:
-
-| Layer | What it does | Default |
-|---|---|---|
-| Name filter | Drop files whose name matches `secret_files:` | `.env`, `.env.local`, `.env.production`, `credentials.json`, `service-account.json`, `secrets.yaml`, `secrets.yml`, `id_rsa`, `id_ed25519` |
-| Policy `block:` | Drop files matching glob patterns | `.env`, `.env.*`, `*.pem`, `credentials.json`, `**/secrets*` |
-| Secret value scan | Drop files whose **content** matches a vendor credential pattern | AWS keys, GitHub tokens, OpenAI / Anthropic keys, JWTs, PEM private keys, SSH keys, Slack / Google API keys |
-| Env-marker scan | Warn on `API_KEY=`, `PASSWORD=`, `TOKEN=`, `SECRET=` with a non-placeholder value | files kept, flagged in `suspicious_files` |
-| Prompt-injection scan | Warn on phrases like *ignore previous instructions*, *exfiltrate*, *disable safety*, *upload this code*, *print environment variables* | files kept, listed in `prompt_injection_warnings` |
-| Command safety | Refuse to run `default_test_command` if it matches a destructive pattern | `rm -rf /`, `mkfs`, `dd of=/dev/...`, fork bomb, `curl | sh`, `format C:`, `del /s`, `rmdir /s`, `git push --force`, `git reset --hard`, `git clean -fd`, `shutdown` |
-| Git operations | Only `git checkout -b` into fresh branches | no `push`, `reset`, `force-push`, or branch deletion |
-| Reviewer scope | Diff only | full source never sent to the reviewer |
-
-Every check runs locally. No network, no LLM, no third-party services. Findings land in `.agentforge/runs/<timestamp>/security_report.json`:
-
-```json
-{
-  "blocked_files": ["src/utils/keys.py"],
-  "suspicious_files": ["docs/notes.md"],
-  "prompt_injection_warnings": [
-    {"file": "docs/notes.md", "phrase": "ignore previous instructions"}
-  ],
-  "command_risk": "low",
-  "command_blocked": false,
-  "reasons": ["Dropped 1 file(s) containing secret patterns: aws_access_key"],
-  "safe_to_continue": true
-}
-```
-
-The matched secret value is **never** written to that file — only the pattern name and the file path.
-
-Terminal output:
-
-```
-Security checks:
-- Blocked secret files: src/utils/keys.py
-- Prompt-injection warnings: 1
-    - docs/notes.md: "ignore previous instructions"
-- Command risk: low
-- Safe to continue: yes
-```
-
-If you want the most conservative posture on top of these defaults, drop the [Minimum secure-default config](#minimum-secure-default-config) block above into your `config.yaml`.
-
-## No-Code-Leak Mode
-
-A privacy-first mode for private or commercial repos where you still want the local guardrails (risk, policy, security, budget, merge readiness) but don't want **any** source code, file contents, or diff bodies leaving the machine.
-
-```bash
-agentforge plan      "Refactor user store" --no-code-leak
-agentforge review                          --no-code-leak
-agentforge review-pr --base main           --no-code-leak
-agentforge redteam   --base main           --no-code-leak
-agentforge solve     "..."                 --no-code-leak           # refused
-agentforge solve     "..."                 --no-code-leak --dry-run # ok
-```
-
-Or enable it globally in `config.yaml`:
-
-```yaml
-privacy:
-  no_code_leak_mode: true
-```
-
-The CLI flag overrides the config for that command. The config setting applies to every run unless `--no-code-leak` is passed explicitly.
-
-### Behaviour
-
-| Step | Normal mode | No-Code-Leak Mode |
-|---|---|---|
-| Repo scan, classifier, risk, policy, security, budget, decision | local | local (unchanged) |
-| Planner prompt (paths + summary only — no contents) | sent | sent |
-| Implementer prompt (file bodies) | sent | **never sent** |
-| Review / PR-review / red-team diff body | sent | **redacted to stats only** |
-| `solve` (real run) | runs | **refused with clean stop_reason** |
-| `solve --dry-run` | runs locally | runs locally |
-| `merge readiness`, `scorecards`, `doctor` | runs | runs |
-
-When a reviewer prompt is generated under No-Code-Leak Mode, the diff body is replaced with:
-
-```
-[Diff content redacted by No-Code-Leak Mode]
-Files changed: 3
-Additions: +47
-Deletions: -2
-Changed file categories:
-  - src/auth/*.py (2 files)
-  - tests/*.py (1 file)
-```
-
-The reviewer sees stats + grouped file categories. No raw code. No leaf filenames in the diff section.
-
-### Solve refusal
-
-`solve` requires sending code to the implementer, so under No-Code-Leak Mode the CLI stops cleanly:
-
-```
-# AgentForge solve refused (No-Code-Leak Mode)
-
-AgentForge will not send source code to external agents in
-No-Code-Leak Mode. To proceed:
-  - re-run with --dry-run to preview the pipeline locally
-  - or disable privacy.no_code_leak_mode in config.yaml
-  - or run local-only checks (plan, review, readiness)
-```
-
-`result.status` is `stopped_early` (not `failed`) — it's an intentional refusal, not an error.
-
-### Artifact
-
-Every run writes `.agentforge/runs/<id>/privacy_report.json`:
-
-```json
-{
-  "no_code_leak_mode": true,
-  "source_code_sent": false,
-  "file_contents_sent": false,
-  "diff_content_sent": false,
-  "external_implementation_allowed": false,
-  "redaction_applied": true,
-  "notes": []
-}
-```
-
-### CLI block
-
-```
-Privacy mode:
-- No-Code-Leak Mode: enabled
-- Source code sent to agents: no
-- File contents sent to agents: no
-- Diff content sent to agents: no
-- External implementation calls allowed: no
-```
-
-## Agent scorecards
-
-AgentForge keeps a small local tally per `(agent, role)` so you can see which agent does what well across runs. Stored in `.agentforge/scorecards.json`. **Local only — no network, no telemetry, no source code collected.**
-
-```bash
-agentforge scorecards            # text view
-agentforge scorecards --json     # machine-readable
-agentforge scorecards reset      # wipe local stats
-```
-
-### What gets tracked
-
-Per `(agent, role)`:
-
-- `tasks_attempted`, `tasks_completed`, `failures`, `dry_runs_seen`
-- `average_chars_sent` (from `budget.call_log` per role)
-- `average_duration_ms` (from `task.json` start/end, split across active roles)
-- **Reviewer only:** `review_approvals`, `review_needs_changes`, `high_risk_reviews`
-- **Implementer only:** `tests_passed_after_agent`, `tests_failed_after_agent`
-- `last_used_at` (ISO timestamp)
-
-Updates happen automatically after every `plan`, `solve`, `review`, and `review-pr`. Dry-runs only bump `dry_runs_seen` — they don't count as attempts or completions.
-
-### Sample output
-
-```
-Agent scorecards:
-
-Claude as planner:
-- Plans attempted: 8
-- Plans completed: 7
-- Failure count: 1
-- Dry runs seen: 3
-- Average chars sent: 1,840
-- Last used: 2026-05-26T15:50:49
-
-Codex as implementer:
-- Tasks attempted: 15
-- Tests passed after implementation: 10
-- Tests failed after implementation: 3
-- Failure count: 2
-- Average chars sent: 4,200
-
-Claude as reviewer:
-- Reviews: 12
-- Approved: 7
-- Needs changes: 5
-- High-risk reviews: 4
-- Failure count: 1
-```
-
-### Source artifacts
-
-The ingester reads only artifacts AgentForge already writes for every run: `task.json` (manifest + dry_run flag), `budget.json` (per-call breakdown), `review.json` (status + risk_level), `test_result.txt` (exit code), `risk_report.json`, and `failure_report.json`. No new data is collected.
-
-### Resilience
-
-If `.agentforge/scorecards.json` is missing or unreadable, AgentForge starts fresh and prints a yellow warning on the next run rather than crashing. `agentforge scorecards reset` is the explicit reset.
-
-## Agent decision engine
-
-Before any agent is called, AgentForge picks the **cheapest workflow that's actually safe** for the task. The decision is computed from local signals (classifier, risk, policy, security, context size, budget caps) and saved to `.agentforge/runs/<id>/decision_report.json` so the routing is auditable.
-
-Four possible decisions:
-
-| Decision | When it fires | Calls |
-|---|---|---|
-| `NO_AI` | Security refused, budget would overrun, or LOW docs task with empty context. | 0 |
-| `SINGLE_AGENT` | LOW-risk code / docs / bug-fix change, no policy review requirement. | 1 |
-| `IMPLEMENT_AND_REVIEW` | MEDIUM-risk task, or LOW-risk with policy `require_review`. | 2 |
-| `FULL_PIPELINE` | HIGH-risk or UNKNOWN-risk task; planner + implementer + reviewer. | 3 |
-
-Computed live before each `plan`, `solve`, and `review-pr`. The result lands in the CLI output too:
-
-```
-Agent decision:
-- Decision: FULL_PIPELINE
-- Planned AI calls: 3
-- Agents:
-  - Planner: claude
-  - Implementer: codex
-  - Reviewer: claude
-- Reasons:
-  - Planner included because risk is HIGH
-  - Reviewer required for HIGH risk task
-  - Task classified as HIGH risk
-  - Human approval required before merge
-  - Tests required by policy or risk
-  - Context is within budget (37,768/80,000 chars)
-- Skipped: (none)
-```
-
-And for a LOW-risk task:
-
-```
-Agent decision:
-- Decision: SINGLE_AGENT
-- Planned AI calls: 1
-- Agents:
-  - Planner: (none)
-  - Implementer: codex
-  - Reviewer: (none)
-- Reasons:
-  - Task classified as LOW risk
-  - Context is within budget (0/80,000 chars)
-- Skipped:
-  - Planner skipped because task is a docs
-  - Reviewer skipped because task is LOW risk and no policy requires review
-```
-
-### Decision rules
-
-- LOW docs / typo / comment tasks → `NO_AI` (empty context) or `SINGLE_AGENT` (Codex only).
-- LOW code tasks → `SINGLE_AGENT` (Codex only, no Claude planning, no review).
-- MEDIUM tasks → `IMPLEMENT_AND_REVIEW` (Codex + Claude review, no planner).
-- HIGH / UNKNOWN tasks → `FULL_PIPELINE` (Claude plan + Codex implement + Claude review).
-- Policy `require_review: true` → reviewer included regardless of risk.
-- Policy `require_human_approval: true` → recorded as a reason; the orchestrator's approval gate still applies before implementation.
-- Security `safe_to_continue: false` → `NO_AI`, run flagged not safe to continue.
-- Budget estimate exceeds `max_total_chars` → `NO_AI`, run flagged not safe to continue.
-- `docs` / `tests` / `bug_fix` tasks never get a planner regardless of risk.
-
-### Artifact schema
-
-```json
-{
-  "decision": "IMPLEMENT_AND_REVIEW",
-  "recommended_agents": {
-    "planner": null,
-    "implementer": "codex",
-    "reviewer": "claude"
-  },
-  "planned_ai_calls": 2,
-  "reasons": [
-    "Reviewer required for MEDIUM risk task",
-    "Task classified as MEDIUM risk",
-    "Tests required by policy or risk",
-    "Context is within budget (37,825/80,000 chars)"
-  ],
-  "skipped_steps": [
-    "Planner skipped because risk is MEDIUM"
-  ],
-  "safe_to_continue": true
-}
-```
-
-The engine is **report-only** for now — it explains why the configured pipeline is appropriate. The orchestrator's actual routing uses the same signals so the recommendation reflects reality.
-
-## Red team review mode
-
-`agentforge redteam` is a stricter, adversarial review designed for high-risk changes (auth, security, database, payment, deployment, secrets, permissions, config). The reviewer is prompted to **assume the change is wrong until proven safe**, and the output is a richer structured verdict than plain `review` / `review-pr`.
-
-```bash
-agentforge redteam                                                # review working-tree diff
-agentforge redteam --task "Review password reset changes"         # add task context
-agentforge redteam --base main                                    # PR-style: branch vs base
-agentforge redteam --run .agentforge/runs/<timestamp>             # replay an existing run
-agentforge redteam --dry-run                                      # preview the prompt, no AI call
-```
-
-### Diff sources
-
-| Flag combination | What gets reviewed |
-|---|---|
-| `--run <path>` | The `diff.patch` already saved in that run directory. The new verdict is written into the same dir. |
-| `--base <branch>` | `git diff <base>...HEAD` (PR-style). |
-| neither | The current working-tree diff. |
-
-If no diff resolves (clean tree + no `--base` + no `--run`) the run fails cleanly with a hint to commit changes or pass `--base`.
-
-### What the red-team reviewer is asked to inspect
-
-15 categories, baked into `agentforge/prompts/redteam_prompt.py`:
-
-- authentication bypass
-- token / session issues
-- password reset abuse
-- user enumeration
-- missing authorization checks
-- missing input validation
-- unsafe database changes
-- migration risks
-- secrets exposure
-- unsafe logging (passwords, tokens, PII)
-- destructive shell or git commands
-- missing tests
-- regression risk
-- overbroad changes (more touched than the task implies)
-- mismatch between task and diff
-
-### Output schema
-
-Saved to `.agentforge/runs/<id>/redteam_review.json`:
-
-```json
-{
-  "status": "needs_changes",
-  "risk_level": "high",
-  "findings": [
-    {
-      "severity": "high",
-      "file": "src/auth/password_reset.py",
-      "issue": "Reset token expiry is not validated server-side.",
-      "why_it_matters": "An old token could still be used to take over an account.",
-      "suggested_fix": "Validate expiry before accepting the reset token."
-    }
-  ],
-  "missing_tests": ["Expired reset token should be rejected"],
-  "merge_recommendation": "do_not_merge",
-  "summary": "..."
-}
-```
-
-If the reviewer returns malformed JSON, AgentForge does **not** crash. It records:
-
-```json
-{
-  "status": "needs_manual_review",
-  "risk_level": "high",
-  "merge_recommendation": "do_not_merge",
-  "summary": "Reviewer returned non-JSON output.",
-  "raw_output": "..."
-}
-```
-
-…so a human can read the raw output.
-
-### Constraints
-
-- Local-first. No GitHub auth. No network beyond your configured agent CLI.
-- Never pushes, merges, or commits. Branch state stays the same.
-- Reuses the regular budget, risk, policy, and security engines, so a redteam run looks like any other in the artifact directory — just with a richer verdict file.
-
-## Merge readiness score
-
-After any run (real or dry), AgentForge can roll up the artifacts into a single 0-100 score that answers "is this safe to merge?":
-
-```bash
-agentforge readiness                                 # score the latest run
-agentforge readiness --run .agentforge/runs/<id>     # score a specific run
-```
-
-The engine reads `risk_report.json`, `policy_report.json`, `security_report.json`, `budget.json`, `review.json`, `test_result.txt`, `failure_report.json`, and `task.json` and applies a transparent set of deductions. It never calls an agent.
-
-### Levels
-
-| Score | Level | Meaning |
-|---|---|---|
-| 90–100 | `READY` | All core gates passed. Safe to merge. |
-| 70–89  | `READY_WITH_CAUTION` | Core checks passed but warnings worth reviewing. |
-| 40–69  | `NEEDS_WORK` | Several issues need attention before merging. |
-| 0–39   | `DO_NOT_MERGE` | Critical issues block merge. |
-
-### Hard caps
-
-Regardless of arithmetic, the score is forced below `READY` (capped at 89) when any of these holds:
-
-- tests failed
-- review status is `needs_changes`
-- security says `safe_to_continue: false`
-- `failure_report.json` is present
-- human approval is required but not yet recorded
-
-### Deductions
-
-| Trigger | Subtract |
-|---|---|
-| `failure_report.json` present with status `failed` | 35 |
-| Security says `safe_to_continue: false` | 30 |
-| Secret-bearing files were dropped | 25 |
-| Tests failed | 25 |
-| Tests did not run | 15 |
-| Reviewer requested changes | 20 |
-| Risk level `HIGH` | 15 |
-| Risk level `MEDIUM` | 8 |
-| Human approval required (not recorded) | 15 |
-| Policy requires review but none recorded | 10 |
-| Policy requires tests but they did not run | 10 |
-| Run stopped early | 5 |
-| Prompt-injection warnings present | 5 |
-
-### CLI output
-
-```
-Merge readiness:
-- Score: 78/100
-- Level: READY_WITH_CAUTION
-- Recommendation: Do not merge until human approval is recorded.
-
-Passed:
-  - No secret files were sent
-  - Policy checks completed
-  - Diff review completed and approved
-
-Warnings:
-  - Task classified as HIGH risk
-  - Human approval required before merge
-
-Blockers: (none)
-
-Artifact: .agentforge/runs/<id>/merge_readiness.json
-```
-
-### JSON artifact
-
-`merge_readiness.json` is written alongside the other artifacts. CI can grep `level` to gate a merge job:
-
-```json
-{
-  "score": 78,
-  "level": "READY_WITH_CAUTION",
-  "summary": "The change passed core checks but requires human approval because it touches auth-related files.",
-  "passed": ["No secret files were sent", "Policy checks completed", "Diff review completed and approved"],
-  "warnings": ["Task classified as HIGH risk", "Human approval required before merge"],
-  "blockers": [],
-  "recommendation": "Do not merge until human approval is recorded.",
-  "deductions": [
-    {"reason": "HIGH risk task", "points": 15},
-    {"reason": "Human approval required", "points": 15}
-  ]
-}
-```
-
-## Failure handling
-
-Every run lands in one of five statuses:
-
-| Status | Meaning |
-|---|---|
-| `completed` | Full pipeline ran end to end. |
-| `dry_run_completed` | `--dry-run` finished without calling any agent. |
-| `stopped_early` | Clean stop before completion (tests passed and review wasn't needed, or the budget cap was hit cleanly). |
-| `failed` | An error prevented the run from completing. A `failure_report.json` is on disk. |
-| `planned` | Reserved for future scheduled/queued runs. |
-
-When something goes wrong AgentForge stops safely and writes `.agentforge/runs/<timestamp>/failure_report.json`:
-
-```json
-{
-  "status": "failed",
-  "error_category": "AGENT_ERROR",
-  "message": "'claude' not found on PATH. Install it, or update the command in config.yaml.",
-  "step_failed": "planning",
-  "safe_to_retry": false,
-  "suggested_fix": [
-    "Install the missing agent CLI (claude / codex)",
-    "Or update claude_command / codex_command in config.yaml",
-    "Or run again with --dry-run to preview without calling an agent"
-  ],
-  "partial_artifacts_written": ["task.json", "repo_summary.json", "selected_files.json", "..."],
-  "timestamp": "2026-05-24T14:12:34"
-}
-```
-
-The CLI surfaces the same content:
-
-```
-AgentForge stopped safely.
-Reason: 'claude' not found on PATH. Install it, or update the command in config.yaml.
-Category: AGENT_ERROR
-Step: planning
-Safe to retry: no
-
-Suggested fix:
-  - Install the missing agent CLI (claude / codex)
-  - Or update claude_command / codex_command in config.yaml
-  - Or run again with --dry-run to preview without calling an agent
-(Retrying without changes will hit the same error.)
-```
-
-### Error categories
-
-| Category | Triggers | What to do |
-|---|---|---|
-| `AGENT_ERROR` | `claude` / `codex` CLI missing, timed out, or returned an empty response | Install the CLI, or `--dry-run`. Safe to retry: no. |
-| `BUDGET_ERROR` | `max_ai_calls_per_run`, `max_total_chars`, or `max_review_loops` exceeded | Raise the cap or narrow the task. Safe to retry: yes (after config change). |
-| `GIT_ERROR` | not a git repo, dirty tree, branch name conflict | `git init`, commit/stash, or rename branch. Safe to retry: yes. |
-| `TEST_ERROR` | `default_test_command` refused by security check or failed at run time | Update the command, inspect `test_result.txt` and `security_report.json`. |
-| `SECURITY_ERROR` | secret-bearing files or dangerous command detected | Fix the offending file or command; rotate any leaked secret. |
-| `POLICY_ERROR` | a YAML policy blocked something the run needed | Adjust `policies:` in `config.yaml`. |
-| `CONFIG_ERROR` | missing or malformed `config.yaml` | `agentforge init`, or pass `--config`. |
-| `ARTIFACT_ERROR` | can't write to `.agentforge/runs/` (disk full, permissions) | Check disk and permissions. |
-| `UNKNOWN_ERROR` | uncaught exception or `Ctrl+C` | Re-run with `--dry-run` to isolate. Open an issue with the failure report. |
-
-### Timeouts
-
-Agent and test commands honour `command_timeout_seconds` in `config.yaml` (default `600`). If a subprocess doesn't return in that many seconds, AgentForge stops it, marks the run `failed`, and writes a failure report. Lower it for tight CI; raise it for big refactors or slow test suites.
-
-### Interrupted runs
-
-`Ctrl+C` is caught at the top level. The run is marked `failed`, a failure report is written, and partial artifacts (everything that landed before the interrupt) are kept under `.agentforge/runs/<timestamp>/`. You can resume by re-running the same command — there is no shared state to clean up.
-
-### Invalid agent JSON
-
-If the reviewer returns text that isn't valid JSON (or wraps it in code fences), AgentForge:
-
-1. Strips the most common wrappers (` ```json `, ` ``` `).
-2. Tries to extract the first JSON object.
-3. If both fail, saves the raw output and marks the verdict as `needs_changes` with `summary: "reviewer returned non-JSON output"` so a human can read it. The run is not aborted.
-
-## Privacy and telemetry
-
-Telemetry is **off by default**. AgentForge sends nothing over the network unless you explicitly opt in:
-
-```bash
-python -m agentforge telemetry status      # show current state
-python -m agentforge telemetry enable      # prints what's collected, asks for confirmation
-python -m agentforge telemetry preview     # show the latest event without sending
-python -m agentforge telemetry disable     # turn it off, clear the anonymous ID
-python -m agentforge telemetry clear       # delete all local telemetry data
-```
-
-When enabled, AgentForge collects a closed-set allowlist of fields: version, command type, dry-run flag, risk level, counts of policy / security findings, AI calls used vs planned, review loops used, run duration in ms, stopped-early flag, error category on failure, OS family, Python version, plus a random anonymous UUID generated at enable time.
-
-It **never** collects: source code, file contents, prompts, diffs, file paths, repo names, branch names, task descriptions, usernames, emails, environment variables, secrets, or command stdout/stderr.
-
-If you provide `--endpoint <url>` events are POSTed there (with a 3-second timeout and silent failure on error). Without an endpoint, events are written locally to `.agentforge/telemetry/events.jsonl` so you can inspect them and decide.
-
-See [PRIVACY.md](PRIVACY.md) for the complete field list, the never-collected list, where data is stored, and how to delete it.
-
-## Safety
-
-- Only non-destructive git is used: `checkout -b` into a fresh branch.
-- Uncommitted changes block branch creation.
-- Secret files are filtered at scan time, before any prompt is built.
-- Binaries are skipped (NUL-byte sniff).
-- No API keys in this repo. Agent CLIs handle their own auth.
-- AgentForge never commits, pushes, or merges. You do.
-
-## Run artifacts
-
-Every run leaves a complete audit trail under `.agentforge/runs/<timestamp>/`:
-
-```
-.agentforge/runs/20260520-141207/
-├── task.json            input task + run manifest (start/end, command, workflow)
-├── repo_summary.json    file inventory at scan time
-├── selected_files.json  files chosen for the context window
-├── risk_report.json     LOW/MEDIUM/HIGH + score + reasons + recommended workflow
-├── policy_report.json   blocked files + escalations
-├── security_report.json secret content scan + injection warnings + command safety verdict
-├── budget.json          planned vs actual AI calls + chars
-├── prompts.json         exact prompts sent to each agent
-├── plan.md              planner output (markdown)
-├── test_result.txt      test stdout/stderr + exit code
-├── diff.patch           implementer's changes
-├── review.json          reviewer verdict (structured JSON)
-└── final_summary.md     human-readable wrap-up
-```
-
-The 12 files are always present. When a step is skipped (dry-run, early stop, abort) the corresponding artifact is filled with a placeholder explaining what happened, so CI and downstream tooling can rely on every file existing.
-
-`task.json` is the top-level **run manifest**:
-
-```json
-{
-  "run_id": "20260520-141207",
-  "mode": "solve",
-  "task": "Add Stripe webhook signature verification",
-  "dry_run": false,
-  "started_at": "2026-05-20T14:12:07",
-  "ended_at":   "2026-05-20T14:12:34",
-  "command": "python -m agentforge solve \"Add Stripe webhook signature verification\"",
-  "agentforge_version": "0.1.0",
-  "agent_workflow": {
-    "planner":     "claude",
-    "implementer": "codex",
-    "reviewer":    "claude"
-  },
-  "classification": {
-    "task_type": "security",
-    "confidence": 0.8,
-    "keywords_matched": ["security", "auth "],
-    "routing": {"planner": "claude", "implementer": "codex", "reviewer": "claude", "require_review": true}
-  },
-  "stopped_early": false,
-  "stop_reason": null
-}
-```
-
-After every run the CLI prints the path so it's one click away:
-
-```
-Run artifacts saved to:
-  .agentforge/runs/20260520-141207/
-```
-
-### See it without running it
-
-A complete worked example is in [`examples/sample-run/`](examples/sample-run/) — all 12 artifacts for a realistic HIGH-risk task ("Add password reset validation to the login flow"), so you can understand the audit trail without installing any agent CLI.
+The full breakdown is written to `risk_report.json` for every run, with `reasons` and a `recommended_workflow`.
 
 ## Example commands
 
 ```bash
-python -m agentforge init                                       # one-time setup
-python -m agentforge plan  "fix the off-by-one in pagination"   # plan only
-python -m agentforge solve "fix the off-by-one in pagination"   # full pipeline
-python -m agentforge solve "fix pagination" --dry-run           # preview, zero AI
-python -m agentforge review --task "added webhook check"        # review working-tree diff
-python -m agentforge review-pr --dry-run                        # PR-style branch review
-python -m agentforge status                                     # latest run summary
+agentforge init                                       # one-time setup
+agentforge doctor                                     # environment check
+agentforge plan  "fix the off-by-one in pagination"   # plan only
+agentforge solve "fix the off-by-one in pagination"   # full pipeline
+agentforge solve "fix pagination" --dry-run           # preview, zero AI
+agentforge review --task "added webhook check"        # review working-tree diff
+agentforge review-pr --base main                      # PR-style branch review
+agentforge redteam --dry-run                          # stricter adversarial review
+agentforge readiness                                  # 0-100 merge-readiness score
+agentforge status                                     # show last run
+agentforge scorecards                                 # per-agent stats
+agentforge telemetry status                           # show telemetry state (off by default)
 ```
 
-`--dry-run` shows the routing, prompts, risk score, and policy decisions without spending any tokens. Useful when:
+| Command | Flags | What it does |
+|---|---|---|
+| `init`       | `--force`, `-c PATH` | Writes `config.yaml`, `.agentforge/project_rules.md`, runs dir. |
+| `doctor`     | `-c PATH` | Health check. Always exits 0; warnings inform. |
+| `plan`       | `--dry-run`, `--no-code-leak`, `-c PATH` | Plan only. No edits. |
+| `solve`      | `--yes/-y`, `--dry-run`, `--no-code-leak`, `-c PATH` | Full pipeline. |
+| `review`     | `--task TEXT`, `--dry-run`, `--no-code-leak`, `-c PATH` | Review working-tree diff. |
+| `review-pr`  | `--task`, `--base`, `--dry-run`, `--no-code-leak`, `-c PATH` | PR-style branch review. |
+| `redteam`    | `--task`, `--base`, `--run PATH`, `--dry-run`, `--no-code-leak`, `-c PATH` | Adversarial review. |
+| `readiness`  | `--run PATH`, `-c PATH` | Compute merge-readiness score for a run. |
+| `status`     | `-c PATH` | Show last run summary. |
+| `test`       | `-c PATH` | Run configured test command. |
+| `scorecards` | `--json`, sub: `reset` | Per-agent stats across runs. |
+| `telemetry`  | sub: `status` / `enable` / `disable` / `preview` / `clear` | Manage anonymous telemetry (off by default). |
 
-- the agent CLIs aren't installed yet
-- you want to preview a risky task before paying for it
-- you're using AgentForge in CI as a pre-flight check
-
-### Dry-run example
-
-```
-$ python -m agentforge solve "Add password reset flow" --dry-run
-
-Dry run: enabled
-No external agents will be called.
-No files will be modified.
-
-Planned workflow:
-  1. Local scan
-  2. Task classification
-  3. Context selection
-  4. Policy check
-  5. Risk assessment
-  6. Claude planning prompt would be generated
-  7. Codex implementation prompt would be generated
-  8. Tests would run
-  9. Claude diff review prompt would be generated
-```
-
-The run still writes the full artifact set (`task.json`, `risk_report.json`, `policy_report.json`, `prompts.json`, `budget.json`, ...) so you can inspect exactly what would have been sent. Steps that didn't execute are filled with placeholders explaining why.
-
-If the agent CLI isn't installed, AgentForge fails fast and explicitly suggests `--dry-run`:
-
-```
-'claude' not found on PATH. Install it, or update the command in config.yaml.
-Tip: the agent CLI doesn't seem to be installed. Re-run with --dry-run to
-preview the full pipeline (scan, classify, risk score, prompts) without
-calling any external agent.
-```
-
-## PR review mode
-
-`agentforge review-pr` reviews the **current branch** against `main` (falling back to `master`) without needing the full `solve` workflow. Use it as a local-only second opinion before opening a real PR.
-
-```bash
-python -m agentforge review-pr
-python -m agentforge review-pr --task "Review password reset changes"
-python -m agentforge review-pr --base develop
-python -m agentforge review-pr --dry-run
-```
-
-What it does:
-
-1. Detects the current branch (`git rev-parse --abbrev-ref HEAD`).
-2. Picks a base branch: `--base` if you passed one, else `main`, else `master`. Aborts cleanly if none of those exist.
-3. Collects the branch-style diff (`git diff base...HEAD`) and the list of changed files.
-4. Runs risk scoring on the task + changed paths.
-5. Runs the policy engine on the changed paths (e.g. block secrets, force review on auth changes).
-6. Builds a review prompt that includes: task, base + head branches, the changed file list, the local risk + policy summaries, and the diff. Saves it to `prompts.json`.
-7. If `--dry-run`, prints the prompt size and stops. Otherwise calls the configured reviewer agent.
-8. Saves the same artifact set as every other run.
-
-The CLI prints:
-
-```
-- PR review: main...agentforge/add-password-validation
-- Changed files (3): src/utils/validators.py, src/auth/login.py, tests/test_auth.py
-- Risk assessment:
-- - Level: HIGH
-- - Score: 75/100
-- Policy checks:
-- - Review required: yes
-- - Human approval required: yes
-- Budget estimate:
-- - Planned AI calls: 1/5
-- ...
-Run artifacts saved to:
-  .agentforge/runs/20260521-001500/
-```
-
-What it does **not** do:
-
-- Never pushes a branch.
-- Never opens a GitHub PR.
-- Never requires GitHub authentication or a `GITHUB_TOKEN`.
-- Never merges anything. The branch is yours.
+See [USAGE.md](USAGE.md) for the full reference.
 
 ## Comparison
 
@@ -1124,176 +212,16 @@ What it does **not** do:
 | Local-first scanning | yes | yes | yes | varies | no |
 | No endless agent conversation | guaranteed | n/a | n/a | not guaranteed | n/a |
 
-## Install
+## Safety guarantees
 
-Requires Python 3.11+, git, and (for real runs) the `claude` and/or `codex` CLIs.
+- Only non-destructive git: `checkout -b` into a fresh branch. Never `push --force`, `reset --hard`, or branch delete.
+- Uncommitted changes block branch creation.
+- Secret files filtered at scan time, before any prompt is built.
+- Binaries skipped (NUL-byte sniff).
+- No API keys in this repo. Agent CLIs handle their own auth.
+- AgentForge never commits, pushes, or merges. You do.
 
-### From source (editable install)
-
-```bash
-git clone https://github.com/namitzz/AgentForge.git
-cd AgentForge
-
-# Create + activate a virtualenv
-python -m venv .venv
-
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-# Windows (cmd)
-.venv\Scripts\activate.bat
-# macOS / Linux
-source .venv/bin/activate
-
-# Install AgentForge as an editable package — gives you the `agentforge`
-# console script and lets you edit the source in place.
-pip install -e .
-
-# (Optional) install dev extras (pytest)
-pip install -e ".[dev]"
-```
-
-After install, the `agentforge` command is on your PATH:
-
-```bash
-agentforge --help
-agentforge init
-agentforge doctor
-agentforge solve "Fix typo in README" --dry-run
-```
-
-### Without installing
-
-If you'd rather not install, you can run the package as a module:
-
-```bash
-pip install -r requirements.txt
-python -m agentforge init
-python -m agentforge solve "Fix typo in README" --dry-run
-```
-
-Both invocations are first-class. The `agentforge` console script and `python -m agentforge` are equivalent.
-
-### Per-project setup
-
-```bash
-cd ~/code/my-app
-agentforge init
-agentforge doctor
-```
-
-Edit `config.yaml` to point at your installed agent CLIs and to add any policies you want enforced.
-
-## Demo
-
-`demo-projects/tiny-python-app/` is a tiny, dependency-free Python app (login + reset-password + email validator) included specifically so you can exercise the full AgentForge pipeline without having a project of your own. **No secrets, no external services.**
-
-```bash
-# Option 1 — one-shot script
-python scripts/demo_dry_run.py
-
-# Option 2 — manual
-cd demo-projects/tiny-python-app
-python -m agentforge init
-python -m agentforge solve "Add password reset validation to the login flow" --dry-run
-```
-
-Expected output (abridged):
-
-```
-Dry run: enabled
-No external agents will be called.
-No files will be modified.
-
-Planned workflow:
-  1. Local scan
-  2. Task classification
-  3. Context selection
-  4. Policy check
-  5. Risk assessment
-  6. Claude planning prompt would be generated
-  7. Codex implementation prompt would be generated
-  8. Tests would run
-  9. Claude diff review prompt would be generated
-
-Security checks:
-- Blocked secret files: none
-- Prompt-injection warnings: 0
-- Command risk: low
-- Safe to continue: yes
-
-Files that would be sent:
-  - src/auth/login.py
-  - src/auth/password_reset.py
-  - src/utils/validators.py
-  - tests/test_auth.py
-  - README.md
-
-Risk assessment:
-- Level: HIGH
-- Score: 85/100
-- Reasons:
-  - Task mentions high-risk topics: login, password
-  - Selected file paths include sensitive areas: auth/
-
-Policy checks:
-- Blocked files: none
-- Review required: yes
-- Tests required: yes
-- Reasons:
-  - Auth changes require review
-
-Budget estimate:
-- Planned AI calls: 3/5
-- Files selected: 5/8
-- Estimated chars sent: ~6,800
-- Review loops allowed: 1
-- Dry run: yes
-
-Run artifacts saved to:
-  .agentforge/runs/<timestamp>/
-```
-
-After the run, inspect:
-
-```bash
-ls demo-projects/tiny-python-app/.agentforge/runs/
-cat demo-projects/tiny-python-app/.agentforge/runs/<latest>/final_summary.md
-```
-
-The demo project also ships a tiny stdlib test suite:
-
-```bash
-cd demo-projects/tiny-python-app
-python -m unittest discover -s tests
-```
-
-See [demo-projects/tiny-python-app/README.md](demo-projects/tiny-python-app/README.md) for details.
-
-### Try it in 2 minutes
-
-You can exercise the entire pipeline without installing Claude or Codex — `--dry-run` mode runs the scan, classifier, policy + risk + security checks, and prompt builders locally, then writes the full artifact set.
-
-```bash
-git clone <this repo>
-cd AgentForge
-pip install -r requirements.txt
-
-# Set up config + .agentforge/ in a project of your choice
-cd ~/code/my-app
-python -m agentforge init
-
-# Verify environment + show what's optional
-python -m agentforge doctor
-
-# Run end-to-end with no AI calls
-python -m agentforge solve "Fix typo in README" --dry-run
-
-# Inspect the audit trail
-python -m agentforge status
-ls .agentforge/runs/
-```
-
-`agentforge doctor` reports Python version, git availability, whether the CWD is a repo, presence of `config.yaml` / `project_rules.md`, Claude/Codex CLIs (flagged as warnings if missing — dry-run still works), test command, security defaults, and telemetry state.
+> These are guarantees about what the orchestrator code does. They are not a guarantee that an agent's *suggested* code is correct or safe — always inspect the diff before merging.
 
 ## Roadmap
 
@@ -1318,12 +246,13 @@ PRs welcome. The release checklist in [`docs/release-checklist.md`](docs/release
 - Filesystem-only context selection. No AST, no embeddings yet.
 - One revision pass max.
 - Agent adapters wrap CLIs via subprocess. Direct SDK integration would be a future extension.
+- Pattern-based security checks are best-effort, not a guarantee.
 
 ## Suggested GitHub metadata
 
 Repository description:
 
-> Cost-aware control plane for Claude, Codex, and AI coding agents.
+> Cost-aware guardrails for Claude coding runs — CLI + Claude Code plugin.
 
 Topics:
 
@@ -1340,14 +269,22 @@ agentforge/
   context_builder.py     minimal-context picker
   budget.py              hard budget caps + reporting
   policy_engine.py       declarative governance rules
-  project_rules.py       loads .agentforge/project_rules.md
   risk_engine.py         LOW / MEDIUM / HIGH scoring
+  security.py            local secret / injection / command scans
+  privacy.py             No-Code-Leak Mode
+  decision_engine.py     agent routing recommendation
+  merge_readiness.py     0-100 merge-readiness score
+  scorecards.py          local per-agent stats
+  telemetry.py           opt-in anonymous telemetry
+  failure.py             status model + failure reports
   logger.py              per-run artifact writer
   agents/                CLI adapters (Claude / Codex / local)
   tools/                 file scanner, git wrappers, diff, tests
-  prompts/               planner / implementer / reviewer prompts
-tests/                   pytest suite
+  prompts/               planner / implementer / reviewer / redteam prompts
+tests/                   pytest suite (300+ tests)
+docs/                    deep-dive documentation
 examples/sample-run/     example artifact directory
+demo-projects/           a tiny safe project for live demos
 .github/workflows/ci.yml
 config.yaml
 ```

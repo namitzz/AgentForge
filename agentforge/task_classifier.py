@@ -346,7 +346,7 @@ def _route_for(
 
 def classify(
     task: str,
-    defaults: tuple[str, str, str] = ("claude", "codex", "claude"),
+    defaults: tuple[str, str, str] = ("claude", "claude", "claude"),
 ) -> Classification:
     """Classify a task description into its most likely intent.
 

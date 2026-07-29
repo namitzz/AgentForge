@@ -4,18 +4,19 @@ Practical notes for running it on real code. The README has the why; this is the
 
 ## Install
 
-You need Python 3.11+, git, and at least one of `claude` or `codex` on your PATH.
+You need Python 3.11+, git, and the `claude` CLI on your PATH.
 
 ```
-pip install -r requirements.txt
+pip install -e .
 ```
 
-Install the agent CLIs if you don't have them yet:
+Install the Claude CLI if you don't have it yet:
 
 ```
 npm i -g @anthropic-ai/claude-code && claude login
-npm i -g @openai/codex && codex login
 ```
+
+AgentForge is Claude-only by default. If you want to swap another coding-agent CLI into a role, install that CLI and point `<role>` at it in `config.yaml` — but nothing beyond `claude` is required.
 
 AgentForge just shells out to those binaries. It doesn't touch auth or API keys.
 
@@ -77,7 +78,12 @@ After any run, the most useful files under `.agentforge/runs/<latest>/`:
 Open the run directory directly:
 
 ```bash
+# Bash / zsh
 ls .agentforge/runs/$(ls -t .agentforge/runs | head -1)/
+
+# Cross-platform: list timestamps and pick
+ls .agentforge/runs/
+ls .agentforge/runs/<timestamp>/
 ```
 
 ## What `solve` actually does
@@ -87,7 +93,7 @@ ls .agentforge/runs/$(ls -t .agentforge/runs | head -1)/
 3. Pick relevant files. Capped by `max_files_sent`, `max_chars_per_file`, and `max_total_chars`.
 4. Plan it. Claude by default. Skipped for bug fixes, tests, and docs.
 5. `git checkout -b agentforge/<slug>`.
-6. Implement. Codex by default.
+6. Implement. Claude by default.
 7. Run your tests.
 8. Review the diff with Claude. Sometimes skipped for low-risk passing runs.
 9. One revision pass if review says `needs_changes`. Then stop.
@@ -175,24 +181,23 @@ max_total_chars: 80000
 
 Hitting any of these aborts the run. The message tells you which cap blew. The partial run still gets saved. Actual spend lives in `.agentforge/runs/<latest>/budget.json`.
 
-## Swapping agents
+## Swapping agents (optional)
 
-In `config.yaml`:
+AgentForge ships Claude-only — every role defaults to `claude` and you don't need to touch this. If you have another coding-agent CLI installed and want it in a role, point that role at it in `config.yaml`:
 
 ```
 agents:
-  planner: codex
-  implementer: claude
-  reviewer: codex
+  planner: claude
+  implementer: claude   # e.g. change to "codex" if you have that CLI
+  reviewer: claude
 ```
 
 Per-task-type routing (bug fixes skip the planner, etc) lives in `task_classifier.py`. Fork it if you want different rules — there's no YAML hook for that yet.
 
-If your installed CLI binary uses different flags:
+If your Claude CLI uses different flags:
 
 ```
-claude_command: "claude --headless --json"
-codex_command:  "codex exec --quiet"
+claude_command: "claude --print"
 ```
 
 The task prompt gets appended as a final quoted arg.

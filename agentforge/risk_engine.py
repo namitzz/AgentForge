@@ -189,7 +189,7 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool, bool]:
         return (
             [
                 "Claude planning required",
-                "Codex implementation allowed",
+                "Claude implementation allowed",
                 "Tests strongly recommended",
                 "Claude diff review required",
                 "Human approval required before merge",
@@ -202,7 +202,7 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool, bool]:
         return (
             [
                 "Claude planning recommended",
-                "Codex implementation allowed",
+                "Claude implementation allowed",
                 "Tests recommended",
                 "Claude diff review recommended",
             ],
@@ -214,7 +214,7 @@ def _recommend_workflow(level: RiskLevel) -> tuple[list[str], bool, bool, bool]:
     return (
         [
             "Planning step can be skipped",
-            "Codex implementation allowed",
+            "Claude implementation allowed",
             "Optional diff review",
             "No human approval gate required",
         ],

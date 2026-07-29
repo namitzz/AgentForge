@@ -7,6 +7,11 @@ venv/
 .agentforge/runs/
 **/.agentforge/runs/
 **/.agentforge/telemetry/
+# Local, machine-specific run state — not source.
+.agentforge/scorecards.json
+**/.agentforge/scorecards.json
+.agentforge/settings.json
+**/.agentforge/settings.json
 dist/
 build/
 *.egg-info/

@@ -12,7 +12,7 @@ codex_command: "codex exec"
 
 agents:
   planner: claude
-  implementer: codex
+  implementer: claude
   reviewer: claude
 
 ignore_dirs:

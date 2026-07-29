@@ -16,7 +16,7 @@ command_timeout_seconds: 600
 
 agents:
   planner: claude
-  implementer: codex
+  implementer: claude
   reviewer: claude
 
 ignore_dirs:
