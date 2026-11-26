@@ -1,4 +1,4 @@
-# AI Preflight
+# HiddenInk
 
 Check anything before you share it with AI. Works in the Claude app with no coding.
 
