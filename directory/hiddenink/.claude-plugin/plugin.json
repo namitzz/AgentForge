@@ -3,7 +3,7 @@
   "name": "hiddenink",
   "displayName": "HiddenInk",
   "version": "0.1.0",
-  "description": "Check anything before you share it with AI. Finds passwords, bank and ID numbers and personal details, reveals hidden instructions aimed at AI (invisible text, white text, data-leak links, look-alike web addresses), gives you a cleaned safe copy, and estimates the energy and carbon of your AI use. No coding needed.",
+  "description": "Check anything before you share it with AI, and track the carbon of your AI use. Finds passwords, bank and ID numbers and personal details, reveals hidden instructions aimed at AI (invisible text, white text, data-leak links, look-alike web addresses), gives you a cleaned safe copy, and shows the estimated carbon used and saved on every check. No coding needed.",
   "author": {
     "name": "namitzz",
     "url": "https://github.com/namitzz/AgentForge"
@@ -13,11 +13,12 @@
   "license": "MIT",
   "icon": ".claude-plugin/icon.png",
   "keywords": [
+    "carbon-footprint",
+    "sustainability",
     "privacy",
     "ai-safety",
     "prompt-injection",
     "redaction",
-    "carbon-footprint",
     "responsible-ai"
   ]
 }

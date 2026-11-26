@@ -1,13 +1,15 @@
 # HiddenInk
 
-Check anything before you share it with AI. Works in the Claude app with no coding.
+Check anything before you share it with AI, and see the carbon of your AI use. Works in the Claude app with no coding.
+
+Every check ends with **carbon used vs saved**: the estimated CO2 of the check itself, and how much you save by sharing the cleaned or trimmed copy instead of the full original.
 
 | Command | What it does |
 |---|---|
 | /preflight | One red, amber or green verdict for privacy, hidden tricks and carbon, plus a cleaned safe copy |
 | /privacy | Finds passwords, access keys, card and bank numbers, National Insurance and passport numbers, emails, phones and dates of birth, and redacts them |
 | /safety | Reveals instructions hidden for AI (invisible Unicode text, white or hidden web text, Word hidden text, encoded text), data-leak image links, disguised web addresses, look-alike letters and harmful commands |
-| /footprint | Estimates the energy and CO2 of a document, a task or the current chat, in everyday terms, with tips that cut it |
+| /footprint | Carbon used vs saved for a document, a task or the current chat, in everyday terms, with a running total and tips that cut it |
 
 You can also just ask, for example "is this safe to paste into an AI chat?" with a file attached.
 

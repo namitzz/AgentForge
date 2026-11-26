@@ -7,4 +7,4 @@ The user wants a privacy check on the attached file or pasted text:
 
 $ARGUMENTS
 
-Use the hiddenink skill's privacy check. If there is no file or text yet, ask for it. Explain in plain English what personal or secret information was found and why it matters, using masked previews only. Offer the redacted copy. If keys or passwords were found, tell them to change or revoke those if they were ever shared.
+Use the hiddenink skill's privacy check. If there is no file or text yet, ask for it. Explain in plain English what personal or secret information was found and why it matters, using masked previews only. Offer the redacted copy. If keys or passwords were found, tell them to change or revoke those if they were ever shared. Finish with the skill's Carbon section: carbon used by this check and carbon saved by sharing the safe copy instead of the original.
