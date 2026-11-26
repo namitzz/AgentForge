@@ -36,9 +36,9 @@ class CarbonSettings:
     # Rough public estimates for frontier-model inference, incl. overhead.
     wh_per_1k_input_tokens: float = 0.25
     wh_per_1k_output_tokens: float = 0.6
-    # Grid carbon intensity of the data centre. 400 g/kWh is a rough
-    # global average; set your provider's region figure for accuracy.
-    grid_intensity_g_per_kwh: float = 400.0
+    # Grid carbon intensity of the data centre. 475 g/kWh is close to the
+    # 2024 global average (Ember: 473). UK is ~125-155. Set your region.
+    grid_intensity_g_per_kwh: float = 475.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "CarbonSettings":

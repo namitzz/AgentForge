@@ -211,10 +211,10 @@ telemetry:
   endpoint: null
 
 # Carbon estimate for Claude calls (used vs saved). Rough defaults;
-# set grid_intensity_g_per_kwh to your provider region for accuracy.
+# 475 is ~the global average; set your region (UK ~130) for accuracy.
 carbon:
   enabled: true
-  grid_intensity_g_per_kwh: 400
+  grid_intensity_g_per_kwh: 475
   wh_per_1k_input_tokens: 0.25
   wh_per_1k_output_tokens: 0.6
   output_tokens_per_call: 1000

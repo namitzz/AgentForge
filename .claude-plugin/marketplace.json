@@ -13,7 +13,7 @@
       "name": "agentforge",
       "source": "./",
       "description": "Check anything before you share it with AI, and see your AI carbon footprint. Works in the Claude app with no coding: /preflight, /privacy, /safety and /footprint find passwords, bank and ID numbers, hidden instructions aimed at AI, fake links and data-leak tricks, give you a cleaned safe copy, and estimate energy and CO2. For developers, /solve, /plan, /review, /readiness and /doctor add risk scoring, policy and security checks, budget caps and carbon tracking to Claude Code runs.",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "author": {
         "name": "namitzz"
       },

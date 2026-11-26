@@ -7,4 +7,4 @@ The user wants the AI footprint of:
 
 **$ARGUMENTS**
 
-Use the `everyday-checks` skill in `footprint` mode. For a file, run it on the file with `--replies` set to the expected number of AI replies. For "this chat" (or nothing given), estimate this conversation's length in characters and run `footprint --chars N --replies <your replies so far> --resend`. If they mention a country, set `--grid` (UK roughly 200). Report energy, CO2e, the everyday comparison and the saving tips, and say clearly these are estimates.
+Use the `everyday-checks` skill in `footprint` mode. For a file, run it on the file with `--replies` set to the expected number of AI replies. For "this chat" (or nothing given), estimate this conversation's length in characters and run `footprint --chars N --replies <your replies so far> --resend`. If they mention a country, set `--grid` (UK about 130). Report energy, CO2e, the everyday comparison and the saving tips, and say clearly these are estimates.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentforge"
-version = "0.3.0"
+version = "0.3.1"
 description = "Cost-aware control plane for Claude, Codex, and AI coding agents."
 readme = "README.md"
 license = { file = "LICENSE" }

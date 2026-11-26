@@ -29,7 +29,7 @@ This is an **estimate, not a measurement**. Anthropic does not publish per-reque
 ```yaml
 carbon:
   enabled: true                  # false removes it from output and budget.json
-  grid_intensity_g_per_kwh: 400  # set your provider region's figure
+  grid_intensity_g_per_kwh: 475  # global avg ~473 (Ember 2024); UK ~130
   wh_per_1k_input_tokens: 0.25
   wh_per_1k_output_tokens: 0.6
   output_tokens_per_call: 1000

@@ -24,7 +24,7 @@ The checker is `scripts/afcheck.py` in this skill's folder (standard-library Pyt
    python3 <skill-folder>/scripts/afcheck.py footprint --chars N --replies N --resend
    ```
    Use `preflight` when the user just asks "is this OK to share". Add `--json` if you need structured data.
-   `--grid` is grams CO2e per kWh: leave the default (400, a rough global average) unless the user names a country; the UK is roughly 150 to 250.
+   `--grid` is grams CO2e per kWh: leave the default (475, close to the 2024 global average of about 473) unless the user names a country; the UK is roughly 125 to 155 (use 130).
 
 3. **Explain the result in plain English** for a non-technical reader:
    - Lead with the verdict: **RED** (do not share as is), **AMBER** (review first), **GREEN** (nothing found).

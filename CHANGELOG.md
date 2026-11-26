@@ -2,6 +2,13 @@
 
 All notable changes to AgentForge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1 - 2026-11-26
+
+### Fixed
+
+- England, Scotland and Wales flag emojis (built from Unicode tag characters) are no longer reported as hidden messages. Hidden tag text elsewhere is still caught.
+- Default grid carbon intensity raised from 400 to 475 gCO2e/kWh, close to the 2024 global average (Ember: 473). UK guidance corrected to about 130 (2025 average ~126 to 154 depending on source).
+
 ## 0.3.0 - 2026-11-26
 
 ### Added

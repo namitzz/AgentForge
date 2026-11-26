@@ -31,7 +31,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 HIGH, MEDIUM, LOW = "high", "medium", "low"
 _SEV_ORDER = {HIGH: 0, MEDIUM: 1, LOW: 2}
@@ -348,7 +348,11 @@ def check_safety(text: str) -> tuple[list[Finding], str]:
     f: list[Finding] = []
 
     # 1. Hidden "tag" characters: invisible text that AI models can read.
-    tag_runs = re.finditer(r"[\U000E0000-\U000E007F]+", text)
+    # Legitimate use: subdivision flags (England, Scotland, Wales) are
+    # U+1F3F4 + tag letters + U+E007F. Skip those.
+    tag_runs = [m for m in re.finditer(r"[\U000E0000-\U000E007F]+", text)
+                if not (m.start() > 0 and text[m.start() - 1] == "\U0001F3F4"
+                        and m.group().endswith("\U000E007F") and len(m.group()) <= 8)]
     for m in tag_runs:
         hidden = "".join(chr(ord(c) - 0xE0000) for c in m.group() if 0xE0020 <= ord(c) <= 0xE007E)
         f.append(Finding("safety", "invisible_tag_text", "Invisible hidden message (Unicode tag characters)",
@@ -450,7 +454,9 @@ def check_safety(text: str) -> tuple[list[Finding], str]:
                          "Do not run this. It can delete files or install malware."))
 
     # Cleaned copy: strip invisible/tag/bidi characters and hidden HTML comments.
-    cleaned = re.sub(r"[\U000E0000-\U000E007F]", "", text)
+    cleaned = text
+    for m in reversed(tag_runs):
+        cleaned = cleaned[:m.start()] + cleaned[m.end():]
     cleaned = "".join(c for c in cleaned if c not in ZERO_WIDTH and c not in BIDI)
     cleaned = HTML_COMMENT_RE.sub("", cleaned)
     cleaned = HIDDEN_CSS_RE.sub("", cleaned)
@@ -581,7 +587,8 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--safe-copy", help="write a cleaned/redacted copy here")
         sp.add_argument("--chars", type=int, help="footprint: size in characters instead of a file")
         sp.add_argument("--replies", type=int, default=1, help="footprint: expected AI replies")
-        sp.add_argument("--grid", type=float, default=400.0, help="grid g CO2e per kWh (UK ~150-250)")
+        sp.add_argument("--grid", type=float, default=475.0,
+                        help="grid g CO2e per kWh (global avg ~473 per Ember 2024; UK ~125-155)")
         sp.add_argument("--resend", action="store_true",
                         help="footprint: the text stays in the chat and is re-read every reply")
     a = ap.parse_args(argv)
