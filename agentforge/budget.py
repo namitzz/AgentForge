@@ -1,6 +1,8 @@
 """Budget tracking for AgentForge runs.
 
-Cost is approximated as (number of AI calls) + (characters sent). No
+Cost is approximated as (number of AI calls) + (characters sent).
+The same numbers drive the carbon estimate (``agentforge/carbon.py``):
+grams CO2e used by real calls and saved by calls that were avoided. No
 token-accurate counting yet — character count is the proxy.
 
 The manager exposes two views of every run:
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .carbon import CarbonReport, CarbonSettings
 from .config import Config
 
 
@@ -48,6 +51,17 @@ class BudgetSnapshot:
     # attribute chars + roles to specific agents. List of
     # {"agent", "role", "prompt_chars"}.
     call_log: list[dict] = field(default_factory=list)
+    carbon_settings: CarbonSettings = field(default_factory=CarbonSettings)
+
+    @property
+    def carbon(self) -> CarbonReport:
+        return CarbonReport.from_budget(
+            self.carbon_settings,
+            ai_calls=self.ai_calls,
+            chars_sent=self.chars_sent,
+            planned_ai_calls=self.planned_ai_calls,
+            planned_chars_sent=self.planned_chars_sent,
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -66,11 +80,12 @@ class BudgetSnapshot:
             "stopped_early": self.stopped_early,
             "stop_reason": self.stop_reason,
             "call_log": list(self.call_log),
+            "carbon": self.carbon.to_dict() if self.carbon_settings.enabled else None,
         }
 
     def estimate_summary(self) -> list[str]:
         """Lines printed before the first agent call."""
-        return [
+        lines = [
             "Budget estimate:",
             f"- Planned AI calls: {self.planned_ai_calls}/{self.max_ai_calls}",
             f"- Files selected: {self.files_sent}/{self.max_files_sent}",
@@ -78,6 +93,9 @@ class BudgetSnapshot:
             f"- Review loops allowed: {self.max_review_loops}",
             f"- Dry run: {'yes' if self.dry_run else 'no'}",
         ]
+        if self.carbon_settings.enabled:
+            lines.append(self.carbon.estimate_line())
+        return lines
 
     def human_summary(self) -> list[str]:
         """Lines printed at the end of the run."""
@@ -91,6 +109,9 @@ class BudgetSnapshot:
         ]
         if self.stop_reason:
             lines.append(f"- Stop reason: {self.stop_reason}")
+        if self.carbon_settings.enabled:
+            lines.append("")
+            lines.extend(self.carbon.human_summary())
         return lines
 
 
@@ -219,4 +240,5 @@ class BudgetManager:
             stopped_early=self.stopped_early,
             stop_reason=self.stop_reason,
             call_log=list(self.call_log),
+            carbon_settings=getattr(self.config, "carbon", None) or CarbonSettings(),
         )

@@ -2,11 +2,16 @@
 
 All notable changes to AgentForge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.0 - 2026-11-26
 
 ### Added
 
+- **Carbon used vs saved.** Carbon tracking: estimated CO2e used by Claude calls and saved by avoided calls, in the budget estimate, end-of-run summary, `final_summary.md` and `budget.json`. Configurable under `carbon:` in `config.yaml` (`agentforge/carbon.py`, `docs/carbon.md`).
 - **Claude Code plugin + marketplace.** The repo now ships `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, so it can be installed as a Claude Code plugin (`/plugin marketplace add namitzz/AgentForge` → `/plugin install agentforge@agentforge-marketplace`). Adds `/agentforge:solve|plan|review|readiness|doctor` slash commands (in `commands/`) and an auto-invoked `agentforge-guardrails` skill (in `skills/`) that routes risky changes through AgentForge's local checks. Commands fall back to `python -m agentforge` when the console script isn't on PATH. See [docs/plugin.md](docs/plugin.md). Validated with `claude plugin validate`.
+
+### Fixed
+
+- `agentforge --version` now works. The plugin's slash commands use it to detect the CLI, so before this fix they wrongly told users to install AgentForge.
 
 ### Changed
 

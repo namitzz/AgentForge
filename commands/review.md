@@ -16,4 +16,4 @@ The user wants an AgentForge review of the current changes.
    ```
    The reviewer only ever sees the diff, never full source files.
 
-3. Read `review.json` (and `security_report.json`) from the newest `.agentforge/runs/<timestamp>/` folder and summarize: the verdict (approved / needs_changes), risk level, and any concrete issues raised. If the reviewer returned non-JSON, report it was flagged for manual review rather than treating it as approved.
+3. Read `review.json` (and `security_report.json`) from the newest `.agentforge/runs/<timestamp>/` folder and summarize: the verdict (approved / needs_changes), risk level, any concrete issues raised, and the estimated carbon used vs saved from `budget.json`. If the reviewer returned non-JSON, report it was flagged for manual review rather than treating it as approved.

@@ -16,4 +16,4 @@ The user wants an AgentForge plan for this task (no files will be changed):
    ```
    Suggest adding `--dry-run` if the user wants to preview the routing and risk with no Claude call.
 
-3. Read the newest `.agentforge/runs/<timestamp>/` folder and summarize `plan.md`, the risk level, and the recommended workflow. Note that `plan` edits nothing and creates no branch.
+3. Read the newest `.agentforge/runs/<timestamp>/` folder and summarize `plan.md`, the risk level, the recommended workflow, and the estimated carbon used vs saved from `budget.json`. Note that `plan` edits nothing and creates no branch.

@@ -63,6 +63,16 @@ secret_files:
 branch_prefix: "agentforge/"
 
 # Declarative governance rules. PolicyEngine enforces these at every run.
+# Carbon estimate for Claude calls (used vs saved). Rough defaults;
+# set grid_intensity_g_per_kwh to your provider region for accuracy.
+carbon:
+  enabled: true
+  grid_intensity_g_per_kwh: 400
+  wh_per_1k_input_tokens: 0.25
+  wh_per_1k_output_tokens: 0.6
+  output_tokens_per_call: 1000
+  chars_per_token: 4
+
 policies:
   - name: "Auth changes require review"
     match:

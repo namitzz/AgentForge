@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from .carbon import CarbonSettings
+
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 
@@ -62,6 +64,9 @@ class Config:
     # bodies to external agents. Local checks still run.
     privacy_no_code_leak: bool = False
 
+    # Carbon estimate settings (see agentforge/carbon.py).
+    carbon: CarbonSettings = field(default_factory=CarbonSettings)
+
     # Declarative governance rules. Raw dicts; PolicyEngine parses them.
     policies: list[dict[str, Any]] = field(default_factory=list)
 
@@ -97,6 +102,7 @@ class Config:
                 (data.get("privacy") or {}).get("no_code_leak_mode", False)
             ),
             policies=list(data.get("policies") or []),
+            carbon=CarbonSettings.from_dict(data.get("carbon")),
             source_path=source,
         )
         return cfg
@@ -203,6 +209,16 @@ telemetry:
   enabled: false
   anonymous_id: null
   endpoint: null
+
+# Carbon estimate for Claude calls (used vs saved). Rough defaults;
+# set grid_intensity_g_per_kwh to your provider region for accuracy.
+carbon:
+  enabled: true
+  grid_intensity_g_per_kwh: 400
+  wh_per_1k_input_tokens: 0.25
+  wh_per_1k_output_tokens: 0.6
+  output_tokens_per_call: 1000
+  chars_per_token: 4
 
 # Declarative governance rules. Optional but recommended.
 policies:

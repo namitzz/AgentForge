@@ -31,6 +31,23 @@ app = typer.Typer(
 console = Console()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from . import __version__
+        typer.echo(f"agentforge {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False, "--version", "-V", callback=_version_callback, is_eager=True,
+        help="Show the AgentForge version and exit.",
+    ),
+) -> None:
+    """AgentForge - cost-aware control plane for Claude coding runs."""
+
+
 def _emit_telemetry_for_run(
     command_type: str,
     result: RunResult,

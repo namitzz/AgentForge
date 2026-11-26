@@ -25,6 +25,7 @@ Do the following:
    - risk level + score
    - which agents the decision engine chose, and how many AI calls were planned vs used
    - any policy escalations (review / tests / human approval) and security findings
+   - carbon used vs saved (the `carbon` block in `budget.json`; say it is an estimate)
    - the run status and where the artifacts live
 
 4. Remind the user that AgentForge never pushes or merges — they inspect the diff (`git diff main`) and merge themselves.

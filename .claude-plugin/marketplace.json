@@ -13,7 +13,7 @@
       "name": "agentforge",
       "source": "./",
       "description": "Cost-aware guardrails for Claude coding runs: risk scoring, policy + security checks, budget caps, and auditable run artifacts, surfaced as slash commands and an auto-invoked guardrail skill for Claude Code.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "namitzz"
       },

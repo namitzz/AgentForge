@@ -124,6 +124,6 @@ ARTIFACT_DESCRIPTIONS: dict[str, str] = {
     "test_result.txt": "test stdout/stderr + exit code",
     "diff.patch": "implementer's changes",
     "review.json": "reviewer verdict (structured JSON)",
-    "budget.json": "AI calls + chars used vs caps",
+    "budget.json": "AI calls + chars used vs caps, carbon used vs saved",
     "final_summary.md": "human-readable end-of-run wrap-up",
 }

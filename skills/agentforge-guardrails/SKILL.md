@@ -20,7 +20,7 @@ Prefer the slash commands this plugin ships (`/agentforge:solve`, `/agentforge:p
 
 1. **Check it is installed.** `agentforge --version`. If missing, tell the user to run `pip install -e .` from the AgentForge repo, then stop — do not fake results.
 
-2. **Preview first, for free.** For anything non-trivial, start with a dry run — it makes **zero AI calls**, edits nothing, and still produces the full risk/policy/security/budget report:
+2. **Preview first, for free.** For anything non-trivial, start with a dry run — it makes **zero AI calls**, edits nothing, and still produces the full risk/policy/security/budget report, including an estimate of the carbon a real run would use:
    ```
    agentforge solve "<task>" --dry-run
    ```

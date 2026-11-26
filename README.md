@@ -45,6 +45,7 @@ Every item below is implemented in this repo and covered by tests:
 - ✅ **Policy checks.** Declarative YAML (`block:` / `match:` / `require_review` / `require_tests` / `require_human_approval`) → `policy_report.json`.
 - ✅ **Security checks.** Local scans for secrets in selected file contents (AWS / GitHub / OpenAI / Anthropic / JWT / PEM / SSH / etc.), prompt-injection phrases, and destructive shell commands → `security_report.json`.
 - ✅ **Budget estimates + summaries.** Up-front "planned AI calls / chars" + final "actuals" with `stopped_early` and `stop_reason`. Hard caps enforced before each call.
+- ✅ **Carbon used vs saved.** Every run estimates grams CO2e for the Claude calls it made and the calls it avoided (dry runs, caps, local checks). Shown in the estimate, the summary and `budget.json`; tunable grid intensity. See [docs/carbon.md](docs/carbon.md).
 - ✅ **Run artifacts.** Every run writes a stable set of structured JSON / Markdown files under `.agentforge/runs/<timestamp>/`. Placeholders fill in for skipped steps.
 - ✅ **PR-style local diff review.** `agentforge review-pr` (working branch vs base) and `agentforge review` (working-tree diff). Diff-only — the reviewer never sees full source.
 - ✅ **Red-team review.** `agentforge redteam` with a stricter adversarial prompt and richer structured findings.
