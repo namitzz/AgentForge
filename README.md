@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/namitzz/AgentForge/actions/workflows/ci.yml/badge.svg)](https://github.com/namitzz/AgentForge/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
 > **AgentForge is a local-first control plane for Claude coding runs.** It helps developers decide when to call Claude versus run a free local check, while enforcing budgets, risk scoring, policy checks, security scanning, and auditable run artifacts. Ships Claude-only; runs on the command line or as a Claude Code plugin.
 
@@ -302,3 +302,7 @@ demo-projects/           a tiny safe project for live demos
 .github/workflows/ci.yml
 config.yaml
 ```
+
+## License
+
+AgentForge and HiddenInk are free for personal, educational and other non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use needs the author's permission: contact [namitzz](https://github.com/namitzz). Versions published before 26 November 2026 were released under MIT.

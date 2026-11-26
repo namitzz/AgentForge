@@ -2,6 +2,12 @@
 
 All notable changes to AgentForge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- License changed from MIT to PolyForm Noncommercial 1.0.0 for AgentForge and the HiddenInk directory edition. Earlier versions remain MIT.
+
 ## 0.3.1 - 2026-11-26
 
 ### Fixed

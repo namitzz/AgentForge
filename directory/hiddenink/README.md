@@ -24,4 +24,4 @@ The plugin is a set of instructions (a skill) that Claude follows to inspect you
 
 ## About
 
-Part of the AgentForge project by namitzz. The full AgentForge plugin, with an offline checker script and guardrails for Claude Code, lives in the root of this repository. MIT licensed.
+Part of the AgentForge project by namitzz. The full AgentForge plugin, with an offline checker script and guardrails for Claude Code, lives in the root of this repository. Free for personal, educational and other non-commercial use under the PolyForm Noncommercial License 1.0.0. For commercial use, contact the author.
