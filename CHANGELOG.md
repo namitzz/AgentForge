@@ -2,6 +2,20 @@
 
 All notable changes to AgentForge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 - 2026-11-26
+
+### Added
+
+- **Everyday checks for non-coders in the Claude app.** New `everyday-checks` skill with `/preflight`, `/privacy`, `/safety` and `/footprint` commands. They work in plain chat with no CLI or install, using a standalone standard-library checker (`skills/everyday-checks/scripts/afcheck.py`).
+  - Privacy: secrets and API keys, passwords, Luhn-checked card numbers, IBANs (mod-97), UK sort codes and account numbers, National Insurance, SSN and passport numbers, dates of birth, emails, phones, postcodes, IPs. Writes a redacted safe copy with consistent placeholders.
+  - Safety: invisible Unicode tag text (decoded and shown), zero-width and direction-override characters, injection phrases, fake system markers, hidden or white HTML, instructions in HTML comments or base64, Word hidden text, data-leak image links, disguised links, look-alike letters, dangerous commands. Writes a cleaned copy.
+  - Footprint: energy, CO2e and everyday comparisons for a document, task or chat, with saving tips.
+- Reads .txt, .md, .csv, .json, .html, .eml, .docx and (when available) .pdf.
+
+### Changed
+
+- Plugin description rewritten for general users.
+
 ## 0.2.0 - 2026-11-26
 
 ### Added

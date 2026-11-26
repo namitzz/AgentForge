@@ -25,6 +25,19 @@ agentforge status
 
 The dry-run preview produces a full audit trail (risk report, policy report, security report, decision report, prompts, budget, merge-readiness score, ...) under `.agentforge/runs/<timestamp>/`. See [DEMO.md](DEMO.md) for the full flow and expected output.
 
+## Use it in the Claude app (no coding needed)
+
+Add the plugin under **Customize > Plugins** in the Claude app, then type any of these in a normal chat with a file attached or text pasted:
+
+| Command | What it does |
+|---|---|
+| `/preflight` | One RED / AMBER / GREEN verdict before you share something with AI: privacy + hidden tricks + carbon, plus a cleaned **safe copy** |
+| `/privacy` | Finds passwords, API keys, card and bank numbers, National Insurance and passport numbers, emails, phones, dates of birth; returns a redacted copy |
+| `/safety` | Finds instructions hidden for AI (invisible Unicode text, white or hidden HTML, Word hidden text, encoded text), data-leak image links, fake or disguised links, look-alike letters, dangerous commands |
+| `/footprint` | Estimates energy and CO2e for a document, a task or the current chat, in everyday terms, with tips that cut it |
+
+These run a small offline checker (`skills/everyday-checks/scripts/afcheck.py`, standard-library Python) inside Claude's own workspace. Nothing is installed and nothing is sent anywhere. Results are pattern-based: GREEN means nothing was found, not a guarantee. Carbon figures are estimates.
+
 ## Use it as a Claude Code plugin
 
 This repo doubles as a **Claude Code plugin marketplace**. Install it to get `/agentforge:*` slash commands and an auto-invoked guardrail skill inside your normal Claude Code session:

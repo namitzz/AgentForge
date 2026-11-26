@@ -6,18 +6,27 @@
     "url": "https://github.com/namitzz/AgentForge"
   },
   "metadata": {
-    "description": "Marketplace hosting the AgentForge plugin: cost-aware guardrails for Claude coding runs."
+    "description": "Marketplace hosting the AgentForge plugin: privacy, safety and carbon checks for everyone, plus guardrails for Claude coding runs."
   },
   "plugins": [
     {
       "name": "agentforge",
       "source": "./",
-      "description": "Cost-aware guardrails for Claude coding runs: risk scoring, policy + security checks, budget caps, and auditable run artifacts, surfaced as slash commands and an auto-invoked guardrail skill for Claude Code.",
-      "version": "0.2.0",
+      "description": "Check anything before you share it with AI, and see your AI carbon footprint. Works in the Claude app with no coding: /preflight, /privacy, /safety and /footprint find passwords, bank and ID numbers, hidden instructions aimed at AI, fake links and data-leak tricks, give you a cleaned safe copy, and estimate energy and CO2. For developers, /solve, /plan, /review, /readiness and /doctor add risk scoring, policy and security checks, budget caps and carbon tracking to Claude Code runs.",
+      "version": "0.3.0",
       "author": {
         "name": "namitzz"
       },
-      "keywords": ["ai-governance", "ai-code-review", "cost-control"]
+      "keywords": [
+        "ai-governance",
+        "ai-code-review",
+        "cost-control",
+        "privacy",
+        "ai-safety",
+        "prompt-injection",
+        "carbon-footprint",
+        "redaction"
+      ]
     }
   ]
 }

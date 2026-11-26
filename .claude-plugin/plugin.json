@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agentforge",
   "displayName": "AgentForge",
-  "version": "0.2.0",
-  "description": "Cost-aware guardrails for Claude coding runs. Adds risk scoring, policy checks, security scanning, budget caps, and auditable run artifacts as slash commands and an auto-invoked guardrail skill for Claude Code.",
+  "version": "0.3.0",
+  "description": "Check anything before you share it with AI, and see your AI carbon footprint. Works in the Claude app with no coding: /preflight, /privacy, /safety and /footprint find passwords, bank and ID numbers, hidden instructions aimed at AI, fake links and data-leak tricks, give you a cleaned safe copy, and estimate energy and CO2. For developers, /solve, /plan, /review, /readiness and /doctor add risk scoring, policy and security checks, budget caps and carbon tracking to Claude Code runs.",
   "author": {
     "name": "namitzz",
     "url": "https://github.com/namitzz/AgentForge"
@@ -18,6 +18,11 @@
     "ai-governance",
     "cost-control",
     "risk-scoring",
-    "developer-tools"
+    "developer-tools",
+    "privacy",
+    "ai-safety",
+    "prompt-injection",
+    "carbon-footprint",
+    "redaction"
   ]
 }
