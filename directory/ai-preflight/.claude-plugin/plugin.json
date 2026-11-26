@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "ai-preflight",
+  "displayName": "AI Preflight",
+  "version": "0.1.0",
+  "description": "Check anything before you share it with AI. Finds passwords, bank and ID numbers and personal details, reveals hidden instructions aimed at AI (invisible text, white text, data-leak links, look-alike web addresses), gives you a cleaned safe copy, and estimates the energy and carbon of your AI use. No coding needed.",
+  "author": {
+    "name": "namitzz",
+    "url": "https://github.com/namitzz/AgentForge"
+  },
+  "homepage": "https://github.com/namitzz/AgentForge/tree/main/directory/ai-preflight",
+  "repository": "https://github.com/namitzz/AgentForge",
+  "license": "MIT",
+  "icon": ".claude-plugin/icon.png",
+  "keywords": ["privacy", "ai-safety", "prompt-injection", "redaction", "carbon-footprint", "responsible-ai"]
+}
