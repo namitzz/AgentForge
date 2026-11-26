@@ -20,5 +20,9 @@
     "prompt-injection",
     "redaction",
     "responsible-ai"
-  ]
+  ],
+  "privacyPolicyUrl": "https://github.com/namitzz/AgentForge/blob/main/directory/hiddenink/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/namitzz/AgentForge/blob/main/directory/hiddenink/TERMS.md",
+  "documentationUrl": "https://github.com/namitzz/AgentForge/blob/main/directory/hiddenink/README.md",
+  "supportUrl": "https://github.com/namitzz/AgentForge/issues"
 }
